@@ -9,8 +9,8 @@ use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::error::SimError;
-use crate::protocol::{self, Command, InitParams, TickParams};
-use crate::state::{Config, Inventory, Location, Vessel, VesselStatus, World};
+use crate::protocol::{self, Command, InitParams, ManifestEntry, TickParams};
+use crate::state::{Config, Inventory, Location, Vessel, VesselStatus, World, add_cargo};
 
 #[derive(Default)]
 pub struct Engine {
@@ -53,13 +53,17 @@ impl Engine {
 
 impl Sim {
     fn init(params: InitParams) -> Result<Self, SimError> {
-        // TODO: cargo mode — validate dock_throughput and cargo_manifest, seed docks from the manifest.
-        if params.dock_throughput.is_some() || !params.cargo_manifest.is_empty() {
-            return Err(SimError::NotImplemented("cargo"));
-        }
-
         validate_travel_times(&params.travel_times)?;
         let num_locations = params.travel_times.len();
+        match &params.dock_throughput {
+            Some(throughput) => validate_dock_throughput(throughput, num_locations)?,
+            None if !params.cargo_manifest.is_empty() => {
+                return Err(SimError::InvalidInit(
+                    "cargo_manifest requires dock_throughput".into(),
+                ));
+            }
+            None => {}
+        }
 
         let mut vessels = IndexMap::new();
         for spec in params.vessels {
@@ -86,15 +90,25 @@ impl Sim {
             vessels.insert(spec.id, vessel);
         }
 
+        validate_manifest(&params.cargo_manifest, num_locations).map_err(SimError::InvalidInit)?;
+        let mut docks = vec![Inventory::new(); num_locations];
+        for entry in &params.cargo_manifest {
+            add_cargo(
+                &mut docks[entry.location],
+                entry.destination,
+                entry.quantity,
+            );
+        }
+
         let world = World {
             tick: 0,
             vessels,
-            docks: vec![Inventory::new(); num_locations],
+            docks,
         };
         Ok(Sim {
             config: Config {
                 travel_times: params.travel_times,
-                dock_throughput: None,
+                dock_throughput: params.dock_throughput,
             },
             committed: world.clone(),
             planned: world.clone(),
@@ -266,6 +280,44 @@ fn validate_travel_times(travel_times: &[Vec<u64>]) -> Result<(), SimError> {
                     "travel_times[{i}][{j}] must be positive"
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+/// One positive throughput per location.
+fn validate_dock_throughput(throughput: &[u32], num_locations: usize) -> Result<(), SimError> {
+    if throughput.len() != num_locations {
+        return Err(SimError::InvalidInit(format!(
+            "dock_throughput has {} entries, expected {num_locations}",
+            throughput.len()
+        )));
+    }
+    if let Some(i) = throughput.iter().position(|&cap| cap == 0) {
+        return Err(SimError::InvalidInit(format!(
+            "dock_throughput[{i}] must be positive"
+        )));
+    }
+    Ok(())
+}
+
+/// Checks every entry up front so a bad one rejects the whole manifest. Shared by `init` and `tick`,
+/// which wrap the reason in their own error.
+fn validate_manifest(entries: &[ManifestEntry], num_locations: usize) -> Result<(), String> {
+    for (i, entry) in entries.iter().enumerate() {
+        for (field, loc) in [
+            ("location", entry.location),
+            ("destination", entry.destination),
+        ] {
+            if loc >= num_locations {
+                return Err(format!(
+                    "cargo_manifest[{i}] {field} {loc} is out of range (0 to {})",
+                    num_locations - 1
+                ));
+            }
+        }
+        if entry.quantity == 0 {
+            return Err(format!("cargo_manifest[{i}] quantity must be positive"));
         }
     }
     Ok(())
@@ -668,6 +720,112 @@ mod tests {
             committed_status(&e, "v1"),
             VesselStatus::Idle { location: 1 }
         );
+    }
+
+    fn cargo_init_line(throughput: &str, manifest: &str) -> String {
+        format!(
+            r#"{{"command":"init","parameters":{{"travel_times":{TT},"dock_throughput":{throughput},"vessels":[{{"id":"v1","location":0}}],"cargo_manifest":{manifest}}}}}"#
+        )
+    }
+
+    #[test]
+    fn cargo_init_renders_initial_cargo() {
+        let mut e = Engine::new();
+        assert_eq!(
+            e.handle_line(&cargo_init_line(
+                "[2,4,1]",
+                r#"[{"location":1,"destination":0,"quantity":3},{"location":0,"destination":2,"quantity":1},{"location":0,"destination":1,"quantity":2},{"location":0,"destination":2,"quantity":4}]"#,
+            )),
+            r#"{"status":"ok","payload":{"tick":0,"vessels":{"v1":{"state":"idle","location":0,"cargo":[]}},"cargo":[{"location":0,"destination":2,"quantity":5},{"location":0,"destination":1,"quantity":2},{"location":1,"destination":0,"quantity":3}]}}"#
+        );
+    }
+
+    #[test]
+    fn cargo_init_without_manifest_has_empty_cargo() {
+        let mut e = Engine::new();
+        let v: Value =
+            serde_json::from_str(&e.handle_line(&cargo_init_line("[2,4,1]", "[]"))).unwrap();
+        assert_eq!(v["payload"]["cargo"], serde_json::json!([]));
+        assert_eq!(
+            v["payload"]["vessels"]["v1"]["cargo"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn base_init_has_no_cargo_fields() {
+        let mut e = Engine::new();
+        let v: Value = serde_json::from_str(&e.handle_line(&std_init())).unwrap();
+        assert!(v["payload"].get("cargo").is_none());
+        assert!(v["payload"]["vessels"]["v1"].get("cargo").is_none());
+    }
+
+    #[test]
+    fn init_rejects_wrong_throughput_length() {
+        let mut e = Engine::new();
+        assert_error(
+            &e.handle_line(&cargo_init_line("[2,4]", "[]")),
+            "invalid init: dock_throughput has 2 entries, expected 3",
+        );
+        assert!(e.sim.is_none());
+    }
+
+    #[test]
+    fn init_rejects_zero_throughput() {
+        let mut e = Engine::new();
+        assert_error(
+            &e.handle_line(&cargo_init_line("[2,0,1]", "[]")),
+            "invalid init: dock_throughput[1] must be positive",
+        );
+    }
+
+    #[test]
+    fn init_rejects_manifest_without_throughput() {
+        let mut e = Engine::new();
+        let line = r#"{"command":"init","parameters":{"travel_times":[[0]],"vessels":[],"cargo_manifest":[{"location":0,"destination":0,"quantity":1}]}}"#;
+        assert_error(
+            &e.handle_line(line),
+            "invalid init: cargo_manifest requires dock_throughput",
+        );
+    }
+
+    #[test]
+    fn bad_manifest_entry_rejects_whole_init() {
+        let cases = [
+            (
+                r#"[{"location":0,"destination":1,"quantity":1},{"location":3,"destination":1,"quantity":1}]"#,
+                "invalid init: cargo_manifest[1] location 3 is out of range (0 to 2)",
+            ),
+            (
+                r#"[{"location":0,"destination":5,"quantity":1}]"#,
+                "invalid init: cargo_manifest[0] destination 5 is out of range (0 to 2)",
+            ),
+            (
+                r#"[{"location":0,"destination":1,"quantity":2},{"location":1,"destination":2,"quantity":0}]"#,
+                "invalid init: cargo_manifest[1] quantity must be positive",
+            ),
+        ];
+        for (manifest, message) in cases {
+            let mut e = Engine::new();
+            assert_error(
+                &e.handle_line(&cargo_init_line("[2,4,1]", manifest)),
+                message,
+            );
+            assert!(e.sim.is_none());
+        }
+    }
+
+    #[test]
+    fn cargo_init_seeds_docks_in_committed_and_history() {
+        let mut e = Engine::new();
+        e.handle_line(&cargo_init_line(
+            "[2,4,1]",
+            r#"[{"location":2,"destination":0,"quantity":1}]"#,
+        ));
+        let sim = e.sim.as_ref().unwrap();
+        assert_eq!(sim.committed, sim.planned);
+        assert_eq!(sim.history, vec![sim.committed.clone()]);
+        assert_eq!(sim.committed.docks[2], Inventory::from([(0, 1)]));
     }
 
     fn assert_invalid_command(response: &str, unknown_field: &str) {
