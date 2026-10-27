@@ -107,6 +107,8 @@ current location instead.
 `load` moves one unit for `destination` from the dock onto the vessel. `unload` moves one unit
 the other way, or delivers it (removes it from the sim) if `destination` is the dock's own
 location. `swap` is a load and an unload in one command, and it either fully applies or not at all.
+Both sides are checked against the state before the swap, so the vessel has to already hold the
+unit it unloads, and it can't load back the unit it just unloaded.
 
 - The vessel must be docked in committed state and have no pending undock.
 - The unit has to exist in planned state, so two loads can't take the same unit.

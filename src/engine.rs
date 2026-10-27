@@ -270,10 +270,12 @@ impl Sim {
         Ok(())
     }
 
-    /// Shared by load/unload/swap. Applies the load (dock → vessel) and then the unload (vessel →
-    /// dock, or delivered if it's for this location) to a scratch copy of planned, counts the dock's
-    /// ops against throughput, and only keeps the copy if everything passed. A vessel with a
-    /// pending undock can't transfer, since it's planned to leave.
+    /// Shared by load/unload/swap. Takes both units out first (the load from the dock, the unload
+    /// from the vessel) so a swap is checked against the state before it, then puts them in (the
+    /// unload goes to the dock, or is delivered if it's for this location). All of this happens on a
+    /// scratch copy of planned, the dock's ops are counted against throughput, and the copy is only
+    /// kept if everything passed. A vessel with a pending undock can't transfer, since it's planned
+    /// to leave.
     fn transfer(
         &mut self,
         vessel_id: &str,
@@ -294,33 +296,38 @@ impl Sim {
         let mut scratch = self.planned.clone();
         let dock_name = || format!("dock at location {location}");
         let vessel_name = || format!("vessel {vessel_id}");
-        if let Some(dest) = load {
-            if !remove_cargo(&mut scratch.docks[location], dest, 1) {
-                return Err(SimError::InsufficientCargo {
-                    what: dock_name(),
-                    destination: dest,
-                });
-            }
-            if !add_cargo(&mut scratch.vessels[vessel_id].cargo, dest, 1) {
-                return Err(SimError::CargoOverflow {
-                    what: vessel_name(),
-                    destination: dest,
-                });
-            }
+        if let Some(dest) = load
+            && !remove_cargo(&mut scratch.docks[location], dest, 1)
+        {
+            return Err(SimError::InsufficientCargo {
+                what: dock_name(),
+                destination: dest,
+            });
         }
-        if let Some(dest) = unload {
-            if !remove_cargo(&mut scratch.vessels[vessel_id].cargo, dest, 1) {
-                return Err(SimError::InsufficientCargo {
-                    what: vessel_name(),
-                    destination: dest,
-                });
-            }
-            if dest != location && !add_cargo(&mut scratch.docks[location], dest, 1) {
-                return Err(SimError::CargoOverflow {
-                    what: dock_name(),
-                    destination: dest,
-                });
-            }
+        if let Some(dest) = unload
+            && !remove_cargo(&mut scratch.vessels[vessel_id].cargo, dest, 1)
+        {
+            return Err(SimError::InsufficientCargo {
+                what: vessel_name(),
+                destination: dest,
+            });
+        }
+        if let Some(dest) = load
+            && !add_cargo(&mut scratch.vessels[vessel_id].cargo, dest, 1)
+        {
+            return Err(SimError::CargoOverflow {
+                what: vessel_name(),
+                destination: dest,
+            });
+        }
+        if let Some(dest) = unload
+            && dest != location
+            && !add_cargo(&mut scratch.docks[location], dest, 1)
+        {
+            return Err(SimError::CargoOverflow {
+                what: dock_name(),
+                destination: dest,
+            });
         }
 
         let mut deliveries = self.deliveries.clone();
@@ -1773,6 +1780,34 @@ mod tests {
             "vessel v1 has no cargo for destination 1",
         );
         assert_eq!(e.handle_line(GET_STATE), before);
+    }
+
+    #[test]
+    fn swap_cant_unload_the_unit_it_just_loaded() {
+        // v1 starts empty, so the unload side has nothing to give back even though the load side
+        // would hand it a destination-2 unit
+        let mut e = stocked_engine();
+        let before = e.handle_line(GET_STATE);
+        assert_error(
+            &e.handle_line(&swap("v1", 2, 2)),
+            "vessel v1 has no cargo for destination 2",
+        );
+        assert_eq!(e.handle_line(GET_STATE), before);
+    }
+
+    #[test]
+    fn swap_cant_load_the_unit_it_just_unloaded() {
+        // dock 0 has no destination-0 cargo, and the unit v1 hands over is delivered, not stocked
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.committed.vessels["v1"].cargo = Inventory::from([(0, 1)]);
+        s.planned = s.committed.clone();
+        let before = s.planned.clone();
+        assert_eq!(
+            s.transfer("v1", Some(0), Some(0)).unwrap_err().to_string(),
+            "dock at location 0 has no cargo for destination 0"
+        );
+        assert_eq!(s.planned, before);
     }
 
     #[test]

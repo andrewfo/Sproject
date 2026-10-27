@@ -37,7 +37,7 @@ impl Engine {
 | `set_destination` | done | committed must be idle; same location cancels; `checked_add` for arrival |
 | `dock` | done | committed idle or docked; overrides a pending move, cancels a pending undock |
 | `undock` | done | committed must be docked; plans idle, keeps pending cargo ops |
-| `transfer` | done | shared by load/unload/swap: checks docked with no pending undock, applies the load then the unload to a scratch copy of planned, records deliveries, checks `dock_ops` against throughput, keeps the copy only if all of it passed |
+| `transfer` | done | shared by load/unload/swap: checks docked with no pending undock, takes both units out (load from the dock, unload from the vessel) before putting either in, so a swap is checked against the state before it, all on a scratch copy of planned, records deliveries, checks `dock_ops` against throughput, keeps the copy only if all of it passed |
 | `load`, `unload`, `swap` | done | thin wrappers over `transfer` |
 | `get_state_at` | done | negative → `NegativeTick`, past current → `TickInFuture`, else renders `history[tick]` |
 
