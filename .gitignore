@@ -1,0 +1,9 @@
+/target
+
+# private working notes
+doc.md
+
+# assignment pdf stays local
+*.pdf
+
+.DS_Store
