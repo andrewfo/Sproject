@@ -38,6 +38,8 @@ When more than one thing is wrong, the error you get depends on check order. The
 - **`init`:** travel matrix → throughput (or manifest-without-throughput) → each vessel (range,
   then duplicate id) → manifest entries → manifest overflow.
 - **`tick`:** manifest in base mode → manifest entries → overflow.
+- **transfers (`load`/`unload`/`swap`):** unknown vessel → location range → docked at the last
+  tick and not undocking → load unit → vessel overflow → unload unit → dock overflow → throughput.
 
 Unit tests pin some of these (for example `set_destination_checks_vessel_before_location`).
 

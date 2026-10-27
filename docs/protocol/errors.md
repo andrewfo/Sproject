@@ -18,6 +18,7 @@ Every error is `{"status":"error","payload":{"message":"..."}}`. The text comes 
 | `ArrivalOverflow` | `travel from <from> to <to> overflows the tick counter` | `set_destination` |
 | `NotDocked` | `vessel <id> is not docked` | cargo commands (planned) |
 | `InsufficientCargo` | `<what> has no cargo for destination <dest>` | cargo commands (planned) |
+| `CargoOverflow` | `<what> would overflow its cargo for destination <dest>` | cargo commands (planned) |
 | `ThroughputExceeded` | `transfer of <ops> operations exceeds dock throughput of <cap> at location <loc>` | cargo commands (planned) |
 | `TickInFuture` | `tick <t> is in the future (current tick: <now>)` | `get_state_at` (planned) |
 | `NegativeTick` | `tick <t> is negative` | `get_state_at` (planned) |

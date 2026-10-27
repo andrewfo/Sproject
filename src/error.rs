@@ -22,6 +22,10 @@ pub enum SimError {
         what: String,
         destination: Location,
     },
+    CargoOverflow {
+        what: String,
+        destination: Location,
+    },
     ThroughputExceeded {
         ops: u64,
         cap: u32,
@@ -52,6 +56,12 @@ impl fmt::Display for SimError {
             SimError::NotDocked(id) => write!(f, "vessel {id} is not docked"),
             SimError::InsufficientCargo { what, destination } => {
                 write!(f, "{what} has no cargo for destination {destination}")
+            }
+            SimError::CargoOverflow { what, destination } => {
+                write!(
+                    f,
+                    "{what} would overflow its cargo for destination {destination}"
+                )
             }
             SimError::ThroughputExceeded { ops, cap, location } => write!(
                 f,

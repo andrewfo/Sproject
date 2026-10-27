@@ -10,7 +10,9 @@ use serde_json::Value;
 
 use crate::error::SimError;
 use crate::protocol::{self, Command, InitParams, ManifestEntry, TickParams};
-use crate::state::{Config, Inventory, Location, Vessel, VesselStatus, World, add_cargo};
+use crate::state::{
+    Config, Inventory, Location, Vessel, VesselStatus, World, add_cargo, remove_cargo,
+};
 
 #[derive(Default)]
 pub struct Engine {
@@ -241,8 +243,74 @@ impl Sim {
         Ok(())
     }
 
-    // TODO: load/unload/swap all go through one helper: apply to a scratch copy of planned,
-    // count diff-based ops at the dock, then commit or reject.
+    /// Shared by load/unload/swap. Applies the load (dock → vessel) and then the unload (vessel →
+    /// dock, or delivered if it's for this location) to a scratch copy of planned, counts the dock's
+    /// ops against throughput, and only keeps the copy if everything passed. A vessel with a
+    /// pending undock can't transfer, since it's planned to leave.
+    #[allow(dead_code)] // load/unload/swap call it next
+    fn transfer(
+        &mut self,
+        vessel_id: &str,
+        load: Option<Location>,
+        unload: Option<Location>,
+    ) -> Result<(), SimError> {
+        let vessel = self.committed_vessel(vessel_id)?;
+        for dest in load.into_iter().chain(unload) {
+            self.check_location(dest)?;
+        }
+        let VesselStatus::Docked { location } = vessel.status else {
+            return Err(SimError::NotDocked(vessel_id.to_owned()));
+        };
+        if self.planned.vessels[vessel_id].status != (VesselStatus::Docked { location }) {
+            return Err(SimError::NotDocked(vessel_id.to_owned()));
+        }
+
+        let mut scratch = self.planned.clone();
+        let dock_name = || format!("dock at location {location}");
+        let vessel_name = || format!("vessel {vessel_id}");
+        if let Some(dest) = load {
+            if !remove_cargo(&mut scratch.docks[location], dest, 1) {
+                return Err(SimError::InsufficientCargo {
+                    what: dock_name(),
+                    destination: dest,
+                });
+            }
+            if !add_cargo(&mut scratch.vessels[vessel_id].cargo, dest, 1) {
+                return Err(SimError::CargoOverflow {
+                    what: vessel_name(),
+                    destination: dest,
+                });
+            }
+        }
+        if let Some(dest) = unload {
+            if !remove_cargo(&mut scratch.vessels[vessel_id].cargo, dest, 1) {
+                return Err(SimError::InsufficientCargo {
+                    what: vessel_name(),
+                    destination: dest,
+                });
+            }
+            if dest != location && !add_cargo(&mut scratch.docks[location], dest, 1) {
+                return Err(SimError::CargoOverflow {
+                    what: dock_name(),
+                    destination: dest,
+                });
+            }
+        }
+
+        let ops = dock_ops(location, &self.committed, &scratch);
+        // base mode has no throughput, so no transfer can fit
+        let cap = self
+            .config
+            .dock_throughput
+            .as_ref()
+            .map_or(0, |throughput| throughput[location]);
+        if ops > u64::from(cap) {
+            return Err(SimError::ThroughputExceeded { ops, cap, location });
+        }
+        self.planned = scratch;
+        Ok(())
+    }
+
     fn load(&mut self, _vessel_id: &str, _destination: Location) -> Result<(), SimError> {
         Err(SimError::NotImplemented("load"))
     }
@@ -1274,6 +1342,163 @@ mod tests {
             vessel(DOCKED_0, &[(1, u32::MAX), (2, u32::MAX)]),
         )]);
         assert_eq!(dock_ops(0, &before, &after), 2 * u64::from(u32::MAX));
+    }
+
+    /// v1 docked at location 0 (throughput 2), with 2 units for 2 and 1 for 1 on the dock.
+    fn stocked_engine() -> Engine {
+        let mut e = Engine::new();
+        e.handle_line(&cargo_init_line(
+            "[2,4,1]",
+            r#"[{"location":0,"destination":2,"quantity":2},{"location":0,"destination":1,"quantity":1}]"#,
+        ));
+        e.handle_line(&dock("v1"));
+        e.handle_line(TICK);
+        e
+    }
+
+    fn sim(e: &mut Engine) -> &mut Sim {
+        e.sim.as_mut().unwrap()
+    }
+
+    fn total_cargo(world: &World) -> u32 {
+        let on_docks: u32 = world.docks.iter().flat_map(|d| d.values()).sum();
+        let on_vessels: u32 = world.vessels.values().flat_map(|v| v.cargo.values()).sum();
+        on_docks + on_vessels
+    }
+
+    #[test]
+    fn transfer_load_moves_dock_cargo_onto_the_vessel() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.transfer("v1", Some(2), None).unwrap();
+        assert_eq!(s.planned.vessels["v1"].cargo, Inventory::from([(2, 1)]));
+        assert_eq!(s.planned.docks[0], Inventory::from([(2, 1), (1, 1)]));
+        assert_eq!(total_cargo(&s.planned), total_cargo(&s.committed));
+    }
+
+    #[test]
+    fn transfer_unload_moves_vessel_cargo_onto_the_dock() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.transfer("v1", Some(1), None).unwrap();
+        s.transfer("v1", None, Some(1)).unwrap();
+        assert_eq!(s.planned.vessels["v1"].cargo, Inventory::new());
+        // the unit went back on the end, after dest 2
+        assert_eq!(s.planned.docks[0], Inventory::from([(2, 2), (1, 1)]));
+        assert_eq!(total_cargo(&s.planned), total_cargo(&s.committed));
+    }
+
+    #[test]
+    fn transfer_unload_at_its_destination_delivers() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.committed.vessels["v1"].cargo = Inventory::from([(0, 1)]);
+        s.planned = s.committed.clone();
+        s.transfer("v1", None, Some(0)).unwrap();
+        assert_eq!(s.planned.vessels["v1"].cargo, Inventory::new());
+        assert!(!s.planned.docks[0].contains_key(&0));
+        assert_eq!(total_cargo(&s.planned), total_cargo(&s.committed) - 1);
+    }
+
+    #[test]
+    fn transfer_swap_conserves_cargo_and_counts_one_op() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.transfer("v1", Some(2), None).unwrap();
+        s.transfer("v1", Some(1), Some(2)).unwrap();
+        assert_eq!(s.planned.vessels["v1"].cargo, Inventory::from([(1, 1)]));
+        assert_eq!(dock_ops(0, &s.committed, &s.planned), 1);
+        assert_eq!(total_cargo(&s.planned), total_cargo(&s.committed));
+    }
+
+    #[test]
+    fn transfer_rejects_a_missing_dock_unit() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        let before = s.planned.clone();
+        assert_eq!(
+            s.transfer("v1", Some(0), None).unwrap_err().to_string(),
+            "dock at location 0 has no cargo for destination 0"
+        );
+        assert_eq!(s.planned, before);
+    }
+
+    #[test]
+    fn transfer_swap_with_a_missing_unload_unit_leaves_planned_alone() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        let before = s.planned.clone();
+        // the load half would work, so this checks it got thrown away
+        assert_eq!(
+            s.transfer("v1", Some(2), Some(1)).unwrap_err().to_string(),
+            "vessel v1 has no cargo for destination 1"
+        );
+        assert_eq!(s.planned, before);
+    }
+
+    #[test]
+    fn transfer_rejects_going_over_throughput() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.transfer("v1", Some(2), None).unwrap();
+        s.transfer("v1", Some(2), None).unwrap();
+        let before = s.planned.clone();
+        assert_eq!(
+            s.transfer("v1", Some(1), None).unwrap_err().to_string(),
+            "transfer of 3 operations exceeds dock throughput of 2 at location 0"
+        );
+        assert_eq!(s.planned, before);
+    }
+
+    #[test]
+    fn transfer_rejects_vessels_not_docked_at_the_last_tick() {
+        let mut e = stocked_engine();
+        e.handle_line(&undock("v1"));
+        let s = sim(&mut e);
+        let before = s.planned.clone();
+        assert_eq!(
+            s.transfer("v1", Some(2), None).unwrap_err().to_string(),
+            "vessel v1 is not docked"
+        );
+        assert_eq!(s.planned, before);
+        // docked only in the plan isn't enough either
+        let mut e = cargo_initialized();
+        e.handle_line(&dock("v1"));
+        assert_eq!(
+            sim(&mut e)
+                .transfer("v1", Some(2), None)
+                .unwrap_err()
+                .to_string(),
+            "vessel v1 is not docked"
+        );
+    }
+
+    #[test]
+    fn transfer_checks_vessel_then_location_then_docked() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        assert_eq!(
+            s.transfer("nope", Some(9), None).unwrap_err().to_string(),
+            "unknown vessel nope"
+        );
+        assert_eq!(
+            s.transfer("v1", None, Some(9)).unwrap_err().to_string(),
+            "location 9 is out of range"
+        );
+    }
+
+    #[test]
+    fn transfer_rejects_a_vessel_cargo_overflow() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.committed.vessels["v1"].cargo = Inventory::from([(2, u32::MAX)]);
+        s.planned = s.committed.clone();
+        let before = s.planned.clone();
+        assert_eq!(
+            s.transfer("v1", Some(2), None).unwrap_err().to_string(),
+            "vessel v1 would overflow its cargo for destination 2"
+        );
+        assert_eq!(s.planned, before);
     }
 
     fn assert_invalid_command(response: &str, unknown_field: &str) {
