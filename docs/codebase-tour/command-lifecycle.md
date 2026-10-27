@@ -25,7 +25,7 @@ Sim::dispatch                                                      │
    │  run handler → Ok(()) or Err(SimError)                        │
    │  on Ok: render planned world, or history for get_state_at     │
    ▼                                                               │
-protocol::render_response(Result<Value, SimError>) ◀───────────────┘
+protocol::render_response(Result<WorldView, SimError>) ◀──────────┘
    │
    ▼
 writeln!(stdout)  →  one JSON line
@@ -42,9 +42,9 @@ writeln!(stdout)  →  one JSON line
    initialized" is a type-level state, not a flag.
 4. **Execute.** `Sim::dispatch` calls the handler. Handlers return `Result<(), SimError>` and
    follow validate-then-mutate (see [error handling](../implementation-notes/error-handling.md)).
-5. **Render.** On success, the payload is the **planned** world rendered as `WorldState`.
-   `get_state_at` is the one exception: it returns its own payload (a historical committed world).
-6. **Write.** `render_response` wraps it in `{"status": ..., "payload": ...}` and serializes it to a
-   single line.
+5. **Render.** On success, the payload is a `WorldView` borrowing the **planned** world.
+   `get_state_at` is the one exception: its view borrows a historical committed world.
+6. **Write.** `render_response` wraps it in `{"status": ..., "payload": ...}` and serializes it
+   straight to a single line, with no intermediate `Value`.
 
 Every input line that isn't blank produces exactly one output line, success or failure.

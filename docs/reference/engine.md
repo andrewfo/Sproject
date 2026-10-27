@@ -25,7 +25,7 @@ impl Engine {
 | `Sim` | `config`, `committed`, `planned`, `history`, `deliveries` (see [state structs](../codebase-tour/state-structs.md)) |
 | `Sim::init` | validates params, builds tick-0 world, seeds committed/planned/history |
 | `Sim::dispatch` | rejects dock/cargo commands in base mode, matches a `Command` to its handler, renders planned on success |
-| `Sim::render_planned` | `render_world(&planned, cargo_enabled)` |
+| `Sim::planned_view` / `Sim::view` | wrap `planned` (or a history entry) in a `WorldView` with the cargo flag |
 | `Sim::committed_vessel` | looks up a vessel in committed or returns `UnknownVessel` |
 | `Sim::check_location` | range check or returns `LocationOutOfRange` |
 

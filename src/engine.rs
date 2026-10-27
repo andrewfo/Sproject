@@ -7,14 +7,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use indexmap::IndexMap;
-use serde_json::Value;
-
 use crate::error::SimError;
-use crate::protocol::{self, Command, InitParams, ManifestEntry, TickParams};
+use crate::protocol::{self, Command, InitParams, ManifestEntry, TickParams, WorldView};
 use crate::state::{
     Config, Inventory, Location, Vessel, VesselId, VesselStatus, World, add_cargo, remove_cargo,
 };
+use indexmap::IndexMap;
 
 #[derive(Default)]
 pub struct Engine {
@@ -43,14 +41,11 @@ impl Engine {
         protocol::render_response(protocol::parse_command(line).and_then(|cmd| self.handle(cmd)))
     }
 
-    /// Runs a parsed command and returns the WorldState payload.
-    fn handle(&mut self, cmd: Command) -> Result<Value, SimError> {
+    /// Runs a parsed command and returns the `WorldState` payload.
+    fn handle(&mut self, cmd: Command) -> Result<WorldView<'_>, SimError> {
         match (&mut self.sim, cmd) {
-            (None, Command::Init(params)) => {
-                let sim = Sim::init(params)?;
-                let payload = sim.render_planned();
-                self.sim = Some(sim);
-                Ok(payload)
+            (sim @ None, Command::Init(params)) => {
+                Ok(sim.insert(Sim::init(params)?).planned_view())
             }
             (Some(_), Command::Init(_)) => Err(SimError::AlreadyInitialized),
             (None, _) => Err(SimError::NotInitialized),
@@ -121,7 +116,7 @@ impl Sim {
 
     /// Runs a command and returns its payload: the planned state for everything except `get_state_at`.
     /// In base mode there are no docks, so the dock and cargo commands are rejected outright.
-    fn dispatch(&mut self, cmd: Command) -> Result<Value, SimError> {
+    fn dispatch(&mut self, cmd: Command) -> Result<WorldView<'_>, SimError> {
         if !self.config.cargo_enabled() {
             let name = match cmd {
                 Command::Dock { .. } => Some("dock"),
@@ -160,11 +155,18 @@ impl Sim {
                 unload_destination,
             } => self.swap(&vessel_id, load_destination, unload_destination),
         }?;
-        Ok(self.render_planned())
+        Ok(self.planned_view())
     }
 
-    fn render_planned(&self) -> Value {
-        protocol::render_world(&self.planned, self.config.cargo_enabled())
+    fn planned_view(&self) -> WorldView<'_> {
+        self.view(&self.planned)
+    }
+
+    fn view<'a>(&self, world: &'a World) -> WorldView<'a> {
+        WorldView {
+            world,
+            cargo_enabled: self.config.cargo_enabled(),
+        }
     }
 
     fn committed_vessel(&self, id: &str) -> Result<&Vessel, SimError> {
@@ -358,7 +360,7 @@ impl Sim {
     }
 
     /// Reads committed history only, so pending planned changes never show up here.
-    fn get_state_at(&self, tick: i128) -> Result<Value, SimError> {
+    fn get_state_at(&self, tick: i128) -> Result<WorldView<'_>, SimError> {
         if tick < 0 {
             return Err(SimError::NegativeTick(tick));
         }
@@ -367,7 +369,7 @@ impl Sim {
             .ok()
             .and_then(|t| self.history.get(t))
             .ok_or(SimError::TickInFuture { tick, current })?;
-        Ok(protocol::render_world(world, self.config.cargo_enabled()))
+        Ok(self.view(world))
     }
 }
 
@@ -501,6 +503,8 @@ fn apply_manifest(docks: &mut [Inventory], entries: &[ManifestEntry]) -> Result<
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
 
     const TT: &str = "[[0,4,7],[4,0,3],[7,3,0]]";

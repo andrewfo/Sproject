@@ -26,14 +26,15 @@ Travel times parse as `u64`, so negative values fail at parse time with `Invalid
 
 `serde_json::from_str`, with any error mapped to `SimError::InvalidCommand(e.to_string())`.
 
-### `render_response(result: Result<Value, SimError>) -> String`
+### `render_response(result: Result<WorldView<'_>, SimError>) -> String`
 
 Wraps the result in `{"status":"ok","payload":...}` or
 `{"status":"error","payload":{"message":...}}` and returns one serialized line.
 
-### `render_world(world: &World, cargo_enabled: bool) -> Value`
+### `WorldView<'a> { world: &'a World, cargo_enabled: bool }`
 
-Builds the `WorldState` JSON by hand with `json!`:
+A borrowed view that implements `Serialize` by hand and streams the `WorldState` JSON straight to
+the output, with no intermediate `serde_json::Value`:
 
 - each vessel → `{"state": ..., <status fields>}`, plus a `cargo` array when cargo mode is on
 - docks → flattened `[{location, destination, quantity}]` in location order, emitted only in
