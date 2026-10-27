@@ -669,4 +669,52 @@ mod tests {
             VesselStatus::Idle { location: 1 }
         );
     }
+
+    fn assert_invalid_command(response: &str, unknown_field: &str) {
+        let v: Value = serde_json::from_str(response).unwrap();
+        assert_eq!(v["status"], "error", "expected error, got {response}");
+        let message = v["payload"]["message"].as_str().unwrap();
+        assert!(
+            message.starts_with(&format!("invalid command: unknown field `{unknown_field}`")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn misspelled_init_field_is_rejected() {
+        let mut e = Engine::new();
+        assert_invalid_command(
+            &e.handle_line(
+                r#"{"command":"init","parameters":{"travel_times":[[0]],"vessels":[],"dock_througput":[1]}}"#,
+            ),
+            "dock_througput",
+        );
+        assert!(e.sim.is_none());
+    }
+
+    #[test]
+    fn misspelled_tick_field_does_not_advance() {
+        let mut e = initialized();
+        assert_invalid_command(
+            &e.handle_line(r#"{"command":"tick","parameters":{"cargo_manfest":[]}}"#),
+            "cargo_manfest",
+        );
+        assert_eq!(e.sim.as_ref().unwrap().committed.tick, 0);
+    }
+
+    #[test]
+    fn extra_command_parameters_are_rejected() {
+        let mut e = initialized();
+        assert_invalid_command(
+            &e.handle_line(
+                r#"{"command":"set_destination","parameters":{"vessel_id":"v1","destination":1,"oops":2}}"#,
+            ),
+            "oops",
+        );
+        assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
+        assert_invalid_command(
+            &e.handle_line(r#"{"command":"get_state","parameters":{"extra":1}}"#),
+            "extra",
+        );
+    }
 }

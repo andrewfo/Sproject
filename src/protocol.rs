@@ -7,7 +7,12 @@ use crate::error::SimError;
 use crate::state::{Location, VesselId, VesselStatus, World};
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "command", content = "parameters", rename_all = "snake_case")]
+#[serde(
+    tag = "command",
+    content = "parameters",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum Command {
     Init(InitParams),
     Tick(TickParams),
@@ -42,6 +47,7 @@ pub enum Command {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InitParams {
     pub travel_times: Vec<Vec<u64>>,
     pub vessels: Vec<VesselSpec>,
@@ -52,18 +58,21 @@ pub struct InitParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VesselSpec {
     pub id: VesselId,
     pub location: Location,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TickParams {
     #[serde(default)]
     pub cargo_manifest: Vec<ManifestEntry>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestEntry {
     pub location: Location,
     pub destination: Location,
