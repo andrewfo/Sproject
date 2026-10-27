@@ -120,7 +120,21 @@ impl Sim {
     }
 
     /// Runs a command and returns its payload: the planned state for everything except `get_state_at`.
+    /// In base mode there are no docks, so the dock and cargo commands are rejected outright.
     fn dispatch(&mut self, cmd: Command) -> Result<Value, SimError> {
+        if !self.config.cargo_enabled() {
+            let name = match cmd {
+                Command::Dock { .. } => Some("dock"),
+                Command::Undock { .. } => Some("undock"),
+                Command::Load { .. } => Some("load"),
+                Command::Unload { .. } => Some("unload"),
+                Command::Swap { .. } => Some("swap"),
+                _ => None,
+            };
+            if let Some(name) = name {
+                return Err(SimError::CargoDisabled(name));
+            }
+        }
         match cmd {
             Command::Init(_) => unreachable!("init is handled by Engine"),
             Command::Tick(params) => self.tick(params),
@@ -310,12 +324,11 @@ impl Sim {
         }
 
         let ops = dock_ops(location, &self.committed, &scratch, &deliveries);
-        // base mode has no throughput, so no transfer can fit
         let cap = self
             .config
             .dock_throughput
             .as_ref()
-            .map_or(0, |throughput| throughput[location]);
+            .expect("dispatch rejects transfers in base mode")[location];
         if ops > u64::from(cap) {
             return Err(SimError::ThroughputExceeded { ops, cap, location });
         }
@@ -1106,6 +1119,25 @@ mod tests {
 
     fn dock(vessel: &str) -> String {
         format!(r#"{{"command":"dock","parameters":{{"vessel_id":"{vessel}"}}}}"#)
+    }
+
+    #[test]
+    fn base_mode_rejects_dock_and_cargo_commands() {
+        let mut e = initialized();
+        let before = e.handle_line(GET_STATE);
+        for (cmd, line) in [
+            ("dock", dock("v1")),
+            ("undock", undock("v1")),
+            ("load", load("v1", 1)),
+            ("unload", unload("v1", 1)),
+            ("swap", swap("v1", 1, 2)),
+        ] {
+            assert_error(
+                &e.handle_line(&line),
+                &format!("{cmd} requires dock_throughput"),
+            );
+        }
+        assert_eq!(e.handle_line(GET_STATE), before);
     }
 
     fn undock(vessel: &str) -> String {

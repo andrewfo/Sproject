@@ -36,7 +36,7 @@ pub enum SimError {
         current: Tick,
     },
     NegativeTick(i128),
-    NotImplemented(&'static str),
+    CargoDisabled(&'static str),
 }
 
 impl fmt::Display for SimError {
@@ -71,7 +71,7 @@ impl fmt::Display for SimError {
                 write!(f, "tick {tick} is in the future (current tick: {current})")
             }
             SimError::NegativeTick(tick) => write!(f, "tick {tick} is negative"),
-            SimError::NotImplemented(cmd) => write!(f, "{cmd} is not implemented yet"),
+            SimError::CargoDisabled(cmd) => write!(f, "{cmd} requires dock_throughput"),
         }
     }
 }
