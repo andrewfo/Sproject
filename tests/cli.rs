@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-fn run(input: &[u8]) -> (Vec<Value>, bool) {
+fn run_raw(input: &[u8]) -> (String, bool) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_fleet-sim"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -13,12 +13,16 @@ fn run(input: &[u8]) -> (Vec<Value>, bool) {
         .unwrap();
     child.stdin.take().unwrap().write_all(input).unwrap();
     let out = child.wait_with_output().unwrap();
-    let lines = String::from_utf8(out.stdout)
-        .unwrap()
+    (String::from_utf8(out.stdout).unwrap(), out.status.success())
+}
+
+fn run(input: &[u8]) -> (Vec<Value>, bool) {
+    let (stdout, ok) = run_raw(input);
+    let lines = stdout
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    (lines, out.status.success())
+    (lines, ok)
 }
 
 #[test]
@@ -50,4 +54,27 @@ fn blank_and_crlf_lines_are_handled() {
         lines[0]["payload"]["message"],
         "simulation not initialized; send init first"
     );
+}
+
+/// The golden tests compare parsed JSON, so they'd miss a change in key order or spacing. This
+/// checks the binary's raw stdout against the fixtures byte for byte.
+#[test]
+fn golden_outputs_match_byte_for_byte() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+    for name in ["base_example", "cargo_example", "history_example"] {
+        let input = std::fs::read(dir.join(format!("{name}.in.jsonl"))).unwrap();
+        let want = std::fs::read_to_string(dir.join(format!("{name}.out.jsonl"))).unwrap();
+
+        let (got, ok) = run_raw(&input);
+        assert!(ok);
+
+        for (i, (got, want)) in got.lines().zip(want.lines()).enumerate() {
+            assert_eq!(got, want, "{name} line {}", i + 1);
+        }
+        assert_eq!(
+            got.lines().count(),
+            want.lines().count(),
+            "{name} line count"
+        );
+    }
 }
