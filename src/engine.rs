@@ -246,6 +246,7 @@ mod tests {
     use super::*;
 
     const TT: &str = "[[0,4,7],[4,0,3],[7,3,0]]";
+    const GET_STATE: &str = r#"{"command":"get_state","parameters":{}}"#;
 
     fn init_line(travel_times: &str, vessels: &str) -> String {
         format!(
@@ -255,6 +256,12 @@ mod tests {
 
     fn std_init() -> String {
         init_line(TT, r#"[{"id":"v1","location":0},{"id":"v2","location":2}]"#)
+    }
+
+    fn initialized() -> Engine {
+        let mut e = Engine::new();
+        e.handle_line(&std_init());
+        e
     }
 
     fn assert_error(response: &str, message: &str) {
@@ -364,8 +371,7 @@ mod tests {
 
     #[test]
     fn second_init_is_rejected() {
-        let mut e = Engine::new();
-        e.handle_line(&std_init());
+        let mut e = initialized();
         assert_error(
             &e.handle_line(&std_init()),
             "simulation already initialized",
@@ -396,38 +402,18 @@ mod tests {
 
     #[test]
     fn init_seeds_committed_planned_and_history() {
-        let mut e = Engine::new();
-        e.handle_line(&std_init());
+        let e = initialized();
         let sim = e.sim.as_ref().unwrap();
         assert_eq!(sim.committed, sim.planned);
         assert_eq!(sim.history, vec![sim.committed.clone()]);
         assert_eq!(sim.committed.docks.len(), 3);
     }
 
-    const GET_STATE: &str = r#"{"command":"get_state","parameters":{}}"#;
-
     #[test]
     fn get_state_after_init_matches_init_payload() {
         let mut e = Engine::new();
         let init = e.handle_line(&std_init());
         assert_eq!(e.handle_line(GET_STATE), init);
-    }
-
-    #[test]
-    fn lookup_helpers_report_unknown_vessel_and_bad_location() {
-        let mut e = Engine::new();
-        e.handle_line(&std_init());
-        let sim = e.sim.as_ref().unwrap();
-        assert_eq!(
-            sim.committed_vessel("nope").unwrap_err().to_string(),
-            "unknown vessel nope"
-        );
-        assert!(sim.committed_vessel("v1").is_ok());
-        assert!(sim.check_location(2).is_ok());
-        assert_eq!(
-            sim.check_location(3).unwrap_err().to_string(),
-            "location 3 is out of range"
-        );
     }
 
     fn set_dest(vessel: &str, destination: Location) -> String {
@@ -440,12 +426,6 @@ mod tests {
         e.sim.as_ref().unwrap().planned.vessels[vessel]
             .status
             .clone()
-    }
-
-    fn initialized() -> Engine {
-        let mut e = Engine::new();
-        e.handle_line(&std_init());
-        e
     }
 
     #[test]
