@@ -255,7 +255,6 @@ impl Sim {
     /// dock, or delivered if it's for this location) to a scratch copy of planned, counts the dock's
     /// ops against throughput, and only keeps the copy if everything passed. A vessel with a
     /// pending undock can't transfer, since it's planned to leave.
-    #[allow(dead_code)] // load/unload/swap call it next
     fn transfer(
         &mut self,
         vessel_id: &str,
@@ -325,21 +324,21 @@ impl Sim {
         Ok(())
     }
 
-    fn load(&mut self, _vessel_id: &str, _destination: Location) -> Result<(), SimError> {
-        Err(SimError::NotImplemented("load"))
+    fn load(&mut self, vessel_id: &str, destination: Location) -> Result<(), SimError> {
+        self.transfer(vessel_id, Some(destination), None)
     }
 
-    fn unload(&mut self, _vessel_id: &str, _destination: Location) -> Result<(), SimError> {
-        Err(SimError::NotImplemented("unload"))
+    fn unload(&mut self, vessel_id: &str, destination: Location) -> Result<(), SimError> {
+        self.transfer(vessel_id, None, Some(destination))
     }
 
     fn swap(
         &mut self,
-        _vessel_id: &str,
-        _load_destination: Location,
-        _unload_destination: Location,
+        vessel_id: &str,
+        load_destination: Location,
+        unload_destination: Location,
     ) -> Result<(), SimError> {
-        Err(SimError::NotImplemented("swap"))
+        self.transfer(vessel_id, Some(load_destination), Some(unload_destination))
     }
 
     // TODO: bounds-check against current tick, render history[tick].
@@ -1601,6 +1600,141 @@ mod tests {
         s.transfer("v1", None, Some(0)).unwrap();
         e.handle_line(TICK);
         assert!(sim(&mut e).deliveries.is_empty());
+    }
+
+    fn load(vessel: &str, destination: Location) -> String {
+        format!(
+            r#"{{"command":"load","parameters":{{"vessel_id":"{vessel}","destination":{destination}}}}}"#
+        )
+    }
+
+    fn unload(vessel: &str, destination: Location) -> String {
+        format!(
+            r#"{{"command":"unload","parameters":{{"vessel_id":"{vessel}","destination":{destination}}}}}"#
+        )
+    }
+
+    fn swap(vessel: &str, load_destination: Location, unload_destination: Location) -> String {
+        format!(
+            r#"{{"command":"swap","parameters":{{"vessel_id":"{vessel}","load_destination":{load_destination},"unload_destination":{unload_destination}}}}}"#
+        )
+    }
+
+    fn v1_cargo(response: &str) -> Value {
+        let v: Value = serde_json::from_str(response).unwrap();
+        assert_eq!(v["status"], "ok", "expected ok, got {response}");
+        v["payload"]["vessels"]["v1"]["cargo"].clone()
+    }
+
+    #[test]
+    fn load_puts_dock_cargo_on_the_vessel() {
+        let mut e = stocked_engine();
+        assert_eq!(
+            v1_cargo(&e.handle_line(&load("v1", 2))),
+            serde_json::json!([{"destination": 2, "quantity": 1}])
+        );
+    }
+
+    #[test]
+    fn load_from_an_empty_dock_fails() {
+        let mut e = docked_engine();
+        assert_error(
+            &e.handle_line(&load("v1", 2)),
+            "dock at location 0 has no cargo for destination 2",
+        );
+    }
+
+    #[test]
+    fn unload_of_cargo_not_on_board_fails() {
+        let mut e = stocked_engine();
+        assert_error(
+            &e.handle_line(&unload("v1", 1)),
+            "vessel v1 has no cargo for destination 1",
+        );
+    }
+
+    #[test]
+    fn unload_at_the_destination_delivers() {
+        let mut e = stocked_engine();
+        e.handle_line(&load("v1", 1));
+        e.handle_line(TICK);
+        e.handle_line(&undock("v1"));
+        e.handle_line(TICK);
+        e.handle_line(&set_dest("v1", 1));
+        for _ in 0..4 {
+            e.handle_line(TICK);
+        }
+        e.handle_line(&dock("v1"));
+        e.handle_line(TICK);
+        let out: Value = serde_json::from_str(&e.handle_line(&unload("v1", 1))).unwrap();
+        assert_eq!(
+            out["payload"]["vessels"]["v1"]["cargo"],
+            serde_json::json!([])
+        );
+        // delivered, so it doesn't land on dock 1
+        assert_eq!(
+            out["payload"]["cargo"],
+            serde_json::json!([{"location": 0, "destination": 2, "quantity": 2}])
+        );
+    }
+
+    #[test]
+    fn swap_is_one_op() {
+        // throughput 1 at location 0, so a swap only fits if it counts once
+        let mut e = Engine::new();
+        e.handle_line(&cargo_init_line(
+            "[1,4,1]",
+            r#"[{"location":0,"destination":2,"quantity":1},{"location":0,"destination":1,"quantity":1}]"#,
+        ));
+        e.handle_line(&dock("v1"));
+        e.handle_line(TICK);
+        e.handle_line(&load("v1", 2));
+        e.handle_line(TICK);
+        assert_eq!(
+            v1_cargo(&e.handle_line(&swap("v1", 1, 2))),
+            serde_json::json!([{"destination": 1, "quantity": 1}])
+        );
+    }
+
+    #[test]
+    fn swap_with_a_missing_side_changes_nothing() {
+        let mut e = stocked_engine();
+        let before = e.handle_line(GET_STATE);
+        assert_error(
+            &e.handle_line(&swap("v1", 2, 1)),
+            "vessel v1 has no cargo for destination 1",
+        );
+        assert_eq!(e.handle_line(GET_STATE), before);
+    }
+
+    #[test]
+    fn going_over_throughput_gives_the_spec_message() {
+        let mut e = stocked_engine();
+        e.handle_line(&load("v1", 2));
+        e.handle_line(&load("v1", 2));
+        assert_error(
+            &e.handle_line(&load("v1", 1)),
+            "transfer of 3 operations exceeds dock throughput of 2 at location 0",
+        );
+    }
+
+    #[test]
+    fn load_after_a_pending_undock_fails() {
+        let mut e = stocked_engine();
+        e.handle_line(&undock("v1"));
+        assert_error(&e.handle_line(&load("v1", 2)), "vessel v1 is not docked");
+    }
+
+    #[test]
+    fn undock_after_a_load_keeps_the_load() {
+        let mut e = stocked_engine();
+        e.handle_line(&load("v1", 2));
+        e.handle_line(&undock("v1"));
+        let out: Value = serde_json::from_str(&e.handle_line(TICK)).unwrap();
+        assert_eq!(
+            out["payload"]["vessels"]["v1"],
+            serde_json::json!({"state": "idle", "location": 0, "cargo": [{"destination": 2, "quantity": 1}]})
+        );
     }
 
     fn assert_invalid_command(response: &str, unknown_field: &str) {
