@@ -136,6 +136,21 @@ impl Sim {
         protocol::render_world(&self.planned, self.config.cargo_enabled())
     }
 
+    fn committed_vessel(&self, id: &str) -> Result<&Vessel, SimError> {
+        self.committed
+            .vessels
+            .get(id)
+            .ok_or_else(|| SimError::UnknownVessel(id.to_owned()))
+    }
+
+    fn check_location(&self, loc: Location) -> Result<(), SimError> {
+        if loc < self.config.num_locations() {
+            Ok(())
+        } else {
+            Err(SimError::LocationOutOfRange(loc))
+        }
+    }
+
     // TODO: validate manifest, advance planned → committed, apply arrivals, add manifest, push history.
     fn tick(&mut self, _params: TickParams) -> Result<(), SimError> {
         Err(SimError::NotImplemented("tick"))
@@ -349,7 +364,7 @@ mod tests {
     fn commands_before_init_are_rejected() {
         let mut e = Engine::new();
         assert_error(
-            &e.handle_line(r#"{"command":"get_state","parameters":{}}"#),
+            &e.handle_line(GET_STATE),
             "simulation not initialized; send init first",
         );
     }
@@ -359,7 +374,7 @@ mod tests {
         let mut e = Engine::new();
         e.handle_line(&init_line("[[0,1],[1,5]]", "[]"));
         assert_error(
-            &e.handle_line(r#"{"command":"get_state","parameters":{}}"#),
+            &e.handle_line(GET_STATE),
             "simulation not initialized; send init first",
         );
         // and a corrected init still goes through
@@ -375,5 +390,31 @@ mod tests {
         assert_eq!(sim.committed, sim.planned);
         assert_eq!(sim.history, vec![sim.committed.clone()]);
         assert_eq!(sim.committed.docks.len(), 3);
+    }
+
+    const GET_STATE: &str = r#"{"command":"get_state","parameters":{}}"#;
+
+    #[test]
+    fn get_state_after_init_matches_init_payload() {
+        let mut e = Engine::new();
+        let init = e.handle_line(&std_init());
+        assert_eq!(e.handle_line(GET_STATE), init);
+    }
+
+    #[test]
+    fn lookup_helpers_report_unknown_vessel_and_bad_location() {
+        let mut e = Engine::new();
+        e.handle_line(&std_init());
+        let sim = e.sim.as_ref().unwrap();
+        assert_eq!(
+            sim.committed_vessel("nope").unwrap_err().to_string(),
+            "unknown vessel nope"
+        );
+        assert!(sim.committed_vessel("v1").is_ok());
+        assert!(sim.check_location(2).is_ok());
+        assert_eq!(
+            sim.check_location(3).unwrap_err().to_string(),
+            "location 3 is out of range"
+        );
     }
 }
