@@ -3,7 +3,7 @@
 [← docs index](../README.md)
 
 ```sh
-cargo test                  # unit, CLI, and golden tests
+cargo test                  # unit, golden, CLI, and property tests
 cargo clippy --all-targets  # lint
 ```
 

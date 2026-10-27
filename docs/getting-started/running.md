@@ -4,8 +4,8 @@
 
 ## Requirements
 
-- Rust with edition 2024 support (1.85 or newer)
-- Dependencies are pulled by Cargo: `serde`, `serde_json` (with `preserve_order`), `indexmap`
+- Rust 1.88 or newer (edition 2024, let-chains, and the locked `proptest` all need it)
+- Dependencies are pulled by Cargo: `serde`, `serde_json`, `indexmap`
 
 ## Build and run
 

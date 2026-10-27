@@ -43,9 +43,10 @@ intermediate tree avoids a String key and a map insert for every field, which wa
 runtime: about 11x faster on fleets of 100 to 1,000 vessels, with byte-identical output.
 **Costs.** Adding a field means touching the views by hand.
 
-## `IndexMap` + `preserve_order`
+## `IndexMap`
 
-**Choice.** Insertion-ordered maps for vessels and inventories, and order-preserving JSON objects.
+**Choice.** Insertion-ordered maps for vessels and inventories. The `Serialize` views walk them in
+order, so JSON key order falls out without needing serde_json's `preserve_order`.
 **Buys.** Output order matches the spec examples byte-for-byte (vessels in init order, cargo in
 first-seen order).
 **Costs.** `shift_remove` on removal is O(n). Inventories are tiny, so that's fine.

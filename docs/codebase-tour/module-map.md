@@ -53,7 +53,7 @@ main ──▶ engine ──▶ protocol ──▶ state
 | Crate | Used for |
 |---|---|
 | `serde` | deriving `Deserialize` on commands, with `deny_unknown_fields` |
-| `serde_json` | parsing and building JSON; `preserve_order` keeps output key order stable |
+| `serde_json` | parsing commands and writing responses |
 | `indexmap` | insertion-ordered maps for vessels and cargo, so output order matches the spec |
 
 ## Further reading
