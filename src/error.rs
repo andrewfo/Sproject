@@ -23,7 +23,7 @@ pub enum SimError {
         destination: Location,
     },
     ThroughputExceeded {
-        ops: u32,
+        ops: u64,
         cap: u32,
         location: Location,
     },

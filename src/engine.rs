@@ -335,6 +335,34 @@ fn validate_manifest(entries: &[ManifestEntry], num_locations: usize) -> Result<
     Ok(())
 }
 
+/// Counts the transfer ops pending at a dock, by diffing each vessel's planned cargo against its
+/// committed cargo. A vessel's ops are `max(loads, unloads)` since a swap pairs one of each into a
+/// single op, so loading and then unloading the same unit nets to zero. Only vessels docked there at
+/// the last tick count, because they're the only ones that can transfer. Sums are u64 so huge
+/// quantities can't overflow.
+fn dock_ops(location: Location, committed: &World, planned: &World) -> u64 {
+    committed
+        .vessels
+        .iter()
+        .filter(|(_, v)| v.status == VesselStatus::Docked { location })
+        .map(|(id, before)| {
+            let after = &planned.vessels[id].cargo;
+            let (mut loads, mut unloads) = (0u64, 0u64);
+            for (dest, &was) in &before.cargo {
+                let now = after.get(dest).copied().unwrap_or(0);
+                loads += u64::from(now.saturating_sub(was));
+                unloads += u64::from(was.saturating_sub(now));
+            }
+            for (dest, &now) in after {
+                if !before.cargo.contains_key(dest) {
+                    loads += u64::from(now);
+                }
+            }
+            loads.max(unloads)
+        })
+        .sum()
+}
+
 /// Adds an already-validated manifest to the docks. Callers pass a scratch copy, so an overflow
 /// partway through doesn't leak into real state.
 fn apply_manifest(docks: &mut [Inventory], entries: &[ManifestEntry]) -> Result<(), String> {
@@ -1141,6 +1169,111 @@ mod tests {
         e.handle_line(&undock("v1"));
         assert_error(&e.handle_line(&set_dest("v1", 1)), "vessel v1 is not idle");
         assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
+    }
+
+    fn vessel(status: VesselStatus, cargo: &[(Location, u32)]) -> Vessel {
+        Vessel {
+            status,
+            cargo: cargo.iter().copied().collect(),
+        }
+    }
+
+    fn world(vessels: Vec<(&str, Vessel)>) -> World {
+        World {
+            tick: 0,
+            vessels: vessels
+                .into_iter()
+                .map(|(id, v)| (id.to_owned(), v))
+                .collect(),
+            docks: vec![Inventory::new(); 3],
+        }
+    }
+
+    const DOCKED_0: VesselStatus = VesselStatus::Docked { location: 0 };
+
+    #[test]
+    fn dock_ops_counts_a_load() {
+        let before = world(vec![("v1", vessel(DOCKED_0, &[]))]);
+        let after = world(vec![("v1", vessel(DOCKED_0, &[(2, 1)]))]);
+        assert_eq!(dock_ops(0, &before, &after), 1);
+    }
+
+    #[test]
+    fn dock_ops_counts_quantities_not_entries() {
+        let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 1)]))]);
+        let after = world(vec![("v1", vessel(DOCKED_0, &[(1, 3), (2, 2)]))]);
+        assert_eq!(dock_ops(0, &before, &after), 4);
+    }
+
+    #[test]
+    fn dock_ops_counts_a_swap_as_one() {
+        let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 1)]))]);
+        let after = world(vec![("v1", vessel(DOCKED_0, &[(2, 1)]))]);
+        assert_eq!(dock_ops(0, &before, &after), 1);
+    }
+
+    #[test]
+    fn dock_ops_uneven_swap_takes_the_bigger_side() {
+        let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 1)]))]);
+        let after = world(vec![("v1", vessel(DOCKED_0, &[(2, 3)]))]);
+        assert_eq!(dock_ops(0, &before, &after), 3);
+    }
+
+    #[test]
+    fn dock_ops_load_then_unload_same_cargo_is_zero() {
+        let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 2)]))]);
+        assert_eq!(dock_ops(0, &before, &before.clone()), 0);
+    }
+
+    #[test]
+    fn dock_ops_adds_up_vessels_at_the_same_dock() {
+        let before = world(vec![
+            ("v1", vessel(DOCKED_0, &[])),
+            ("v2", vessel(DOCKED_0, &[(1, 1)])),
+        ]);
+        let after = world(vec![
+            ("v1", vessel(DOCKED_0, &[(2, 1)])),
+            ("v2", vessel(DOCKED_0, &[])),
+        ]);
+        assert_eq!(dock_ops(0, &before, &after), 2);
+    }
+
+    #[test]
+    fn dock_ops_ignores_other_docks_and_undocked_vessels() {
+        let before = world(vec![
+            ("v1", vessel(VesselStatus::Docked { location: 1 }, &[])),
+            ("v2", vessel(VesselStatus::Idle { location: 0 }, &[])),
+        ]);
+        let after = world(vec![
+            (
+                "v1",
+                vessel(VesselStatus::Docked { location: 1 }, &[(2, 1)]),
+            ),
+            ("v2", vessel(VesselStatus::Docked { location: 0 }, &[])),
+        ]);
+        assert_eq!(dock_ops(0, &before, &after), 0);
+        assert_eq!(dock_ops(1, &before, &after), 1);
+    }
+
+    #[test]
+    fn dock_ops_counts_a_pending_undock() {
+        // loads made before an undock still happen this tick
+        let before = world(vec![("v1", vessel(DOCKED_0, &[]))]);
+        let after = world(vec![(
+            "v1",
+            vessel(VesselStatus::Idle { location: 0 }, &[(2, 1)]),
+        )]);
+        assert_eq!(dock_ops(0, &before, &after), 1);
+    }
+
+    #[test]
+    fn dock_ops_does_not_overflow() {
+        let before = world(vec![("v1", vessel(DOCKED_0, &[]))]);
+        let after = world(vec![(
+            "v1",
+            vessel(DOCKED_0, &[(1, u32::MAX), (2, u32::MAX)]),
+        )]);
+        assert_eq!(dock_ops(0, &before, &after), 2 * u64::from(u32::MAX));
     }
 
     fn assert_invalid_command(response: &str, unknown_field: &str) {
