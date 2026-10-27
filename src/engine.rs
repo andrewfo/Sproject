@@ -156,13 +156,25 @@ impl Sim {
         Err(SimError::NotImplemented("tick"))
     }
 
-    // TODO: committed must be idle; arrives_at_tick = current tick + travel time.
-    fn set_destination(
-        &mut self,
-        _vessel_id: &str,
-        _destination: Location,
-    ) -> Result<(), SimError> {
-        Err(SimError::NotImplemented("set_destination"))
+    /// Setting the destination to the vessel's current location cancels a pending move.
+    fn set_destination(&mut self, vessel_id: &str, destination: Location) -> Result<(), SimError> {
+        let vessel = self.committed_vessel(vessel_id)?;
+        self.check_location(destination)?;
+        let VesselStatus::Idle { location: from } = vessel.status else {
+            return Err(SimError::NotIdle(vessel_id.to_owned()));
+        };
+
+        let status = if destination == from {
+            VesselStatus::Idle { location: from }
+        } else {
+            VesselStatus::Transit {
+                from,
+                to: destination,
+                arrives_at_tick: self.committed.tick + self.config.travel_times[from][destination],
+            }
+        };
+        self.planned.vessels[vessel_id].status = status;
+        Ok(())
     }
 
     fn dock(&mut self, _vessel_id: &str) -> Result<(), SimError> {
@@ -416,5 +428,117 @@ mod tests {
             sim.check_location(3).unwrap_err().to_string(),
             "location 3 is out of range"
         );
+    }
+
+    fn set_dest(vessel: &str, destination: Location) -> String {
+        format!(
+            r#"{{"command":"set_destination","parameters":{{"vessel_id":"{vessel}","destination":{destination}}}}}"#
+        )
+    }
+
+    fn planned_status(e: &Engine, vessel: &str) -> VesselStatus {
+        e.sim.as_ref().unwrap().planned.vessels[vessel]
+            .status
+            .clone()
+    }
+
+    fn initialized() -> Engine {
+        let mut e = Engine::new();
+        e.handle_line(&std_init());
+        e
+    }
+
+    #[test]
+    fn set_destination_plans_transit() {
+        let mut e = initialized();
+        let out: Value = serde_json::from_str(&e.handle_line(&set_dest("v1", 1))).unwrap();
+        assert_eq!(
+            out["payload"]["vessels"]["v1"],
+            serde_json::json!({ "state": "transit", "from": 0, "to": 1, "arrives_at_tick": 4 })
+        );
+        // committed is untouched until the next tick
+        let sim = e.sim.as_ref().unwrap();
+        assert_eq!(
+            sim.committed.vessels["v1"].status,
+            VesselStatus::Idle { location: 0 }
+        );
+    }
+
+    #[test]
+    fn set_destination_second_call_wins() {
+        let mut e = initialized();
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(&set_dest("v1", 2));
+        assert_eq!(
+            planned_status(&e, "v1"),
+            VesselStatus::Transit {
+                from: 0,
+                to: 2,
+                arrives_at_tick: 7
+            }
+        );
+    }
+
+    #[test]
+    fn set_destination_to_current_location_cancels() {
+        let mut e = initialized();
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(&set_dest("v1", 0));
+        assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
+    }
+
+    #[test]
+    fn set_destination_arrival_uses_current_tick() {
+        let mut e = initialized();
+        // Tick isn't implemented yet, so put the world at tick 4 by hand.
+        let sim = e.sim.as_mut().unwrap();
+        sim.committed.tick = 4;
+        sim.planned.tick = 4;
+        e.handle_line(&set_dest("v2", 1));
+        assert_eq!(
+            planned_status(&e, "v2"),
+            VesselStatus::Transit {
+                from: 2,
+                to: 1,
+                arrives_at_tick: 7
+            }
+        );
+    }
+
+    #[test]
+    fn set_destination_rejects_committed_transit() {
+        let mut e = initialized();
+        let transit = VesselStatus::Transit {
+            from: 0,
+            to: 1,
+            arrives_at_tick: 4,
+        };
+        let sim = e.sim.as_mut().unwrap();
+        sim.committed.vessels["v1"].status = transit.clone();
+        sim.planned.vessels["v1"].status = transit.clone();
+        assert_error(&e.handle_line(&set_dest("v1", 2)), "vessel v1 is not idle");
+        assert_eq!(planned_status(&e, "v1"), transit);
+    }
+
+    #[test]
+    fn set_destination_rejects_unknown_vessel() {
+        let mut e = initialized();
+        assert_error(&e.handle_line(&set_dest("nope", 1)), "unknown vessel nope");
+    }
+
+    #[test]
+    fn set_destination_rejects_out_of_range() {
+        let mut e = initialized();
+        assert_error(
+            &e.handle_line(&set_dest("v1", 3)),
+            "location 3 is out of range",
+        );
+        assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
+    }
+
+    #[test]
+    fn set_destination_checks_vessel_before_location() {
+        let mut e = initialized();
+        assert_error(&e.handle_line(&set_dest("nope", 9)), "unknown vessel nope");
     }
 }
