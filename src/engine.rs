@@ -5,13 +5,15 @@
 //! - idle/docked checks look at committed, cargo checks look at planned
 //! - handlers check everything before changing anything, so an error leaves state alone
 
+use std::collections::{BTreeSet, HashMap};
+
 use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::error::SimError;
 use crate::protocol::{self, Command, InitParams, ManifestEntry, TickParams};
 use crate::state::{
-    Config, Inventory, Location, Vessel, VesselStatus, World, add_cargo, remove_cargo,
+    Config, Inventory, Location, Vessel, VesselId, VesselStatus, World, add_cargo, remove_cargo,
 };
 
 #[derive(Default)]
@@ -25,6 +27,10 @@ struct Sim {
     planned: World,
     /// `history[t]` is the committed state at tick `t`.
     history: Vec<World>,
+    /// Units each vessel has delivered since the last tick. A delivery leaves no trace in the
+    /// vessel's cargo diff when it's paired with a load for the same destination, so `dock_ops`
+    /// needs it to count those ops.
+    deliveries: HashMap<VesselId, u64>,
 }
 
 impl Engine {
@@ -109,6 +115,7 @@ impl Sim {
             committed: world.clone(),
             planned: world.clone(),
             history: vec![world],
+            deliveries: HashMap::new(),
         })
     }
 
@@ -191,6 +198,7 @@ impl Sim {
         self.committed = next.clone();
         self.planned = next.clone();
         self.history.push(next);
+        self.deliveries.clear();
         Ok(())
     }
 
@@ -297,7 +305,12 @@ impl Sim {
             }
         }
 
-        let ops = dock_ops(location, &self.committed, &scratch);
+        let mut deliveries = self.deliveries.clone();
+        if unload == Some(location) {
+            *deliveries.entry(vessel_id.to_owned()).or_default() += 1;
+        }
+
+        let ops = dock_ops(location, &self.committed, &scratch, &deliveries);
         // base mode has no throughput, so no transfer can fit
         let cap = self
             .config
@@ -308,6 +321,7 @@ impl Sim {
             return Err(SimError::ThroughputExceeded { ops, cap, location });
         }
         self.planned = scratch;
+        self.deliveries = deliveries;
         Ok(())
     }
 
@@ -405,26 +419,39 @@ fn validate_manifest(entries: &[ManifestEntry], num_locations: usize) -> Result<
 
 /// Counts the transfer ops pending at a dock, by diffing each vessel's planned cargo against its
 /// committed cargo. A vessel's ops are `max(loads, unloads)` since a swap pairs one of each into a
-/// single op, so loading and then unloading the same unit nets to zero. Only vessels docked there at
-/// the last tick count, because they're the only ones that can transfer. Sums are u64 so huge
-/// quantities can't overflow.
-fn dock_ops(location: Location, committed: &World, planned: &World) -> u64 {
+/// single op, so loading and then unloading the same unit nets to zero. Delivered units are gone
+/// from the diff, so they're added back as if still on board and counted as unloads too: loading a
+/// unit for this location and then delivering it is real work, not a no-op. Only vessels docked
+/// there at the last tick count, because they're the only ones that can transfer. Sums are u64 so
+/// huge quantities can't overflow.
+fn dock_ops(
+    location: Location,
+    committed: &World,
+    planned: &World,
+    deliveries: &HashMap<VesselId, u64>,
+) -> u64 {
     committed
         .vessels
         .iter()
         .filter(|(_, v)| v.status == VesselStatus::Docked { location })
         .map(|(id, before)| {
             let after = &planned.vessels[id].cargo;
-            let (mut loads, mut unloads) = (0u64, 0u64);
-            for (dest, &was) in &before.cargo {
-                let now = after.get(dest).copied().unwrap_or(0);
-                loads += u64::from(now.saturating_sub(was));
-                unloads += u64::from(was.saturating_sub(now));
+            let delivered = deliveries.get(id).copied().unwrap_or(0);
+            let mut dests: BTreeSet<Location> =
+                before.cargo.keys().chain(after.keys()).copied().collect();
+            if delivered > 0 {
+                dests.insert(location);
             }
-            for (dest, &now) in after {
-                if !before.cargo.contains_key(dest) {
-                    loads += u64::from(now);
+            let (mut loads, mut unloads) = (0u64, 0u64);
+            for dest in dests {
+                let was = u64::from(before.cargo.get(&dest).copied().unwrap_or(0));
+                let mut now = u64::from(after.get(&dest).copied().unwrap_or(0));
+                if dest == location {
+                    now += delivered;
+                    unloads += delivered;
                 }
+                loads += now.saturating_sub(was);
+                unloads += was.saturating_sub(now);
             }
             loads.max(unloads)
         })
@@ -1263,34 +1290,34 @@ mod tests {
     fn dock_ops_counts_a_load() {
         let before = world(vec![("v1", vessel(DOCKED_0, &[]))]);
         let after = world(vec![("v1", vessel(DOCKED_0, &[(2, 1)]))]);
-        assert_eq!(dock_ops(0, &before, &after), 1);
+        assert_eq!(dock_ops(0, &before, &after, &HashMap::new()), 1);
     }
 
     #[test]
     fn dock_ops_counts_quantities_not_entries() {
         let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 1)]))]);
         let after = world(vec![("v1", vessel(DOCKED_0, &[(1, 3), (2, 2)]))]);
-        assert_eq!(dock_ops(0, &before, &after), 4);
+        assert_eq!(dock_ops(0, &before, &after, &HashMap::new()), 4);
     }
 
     #[test]
     fn dock_ops_counts_a_swap_as_one() {
         let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 1)]))]);
         let after = world(vec![("v1", vessel(DOCKED_0, &[(2, 1)]))]);
-        assert_eq!(dock_ops(0, &before, &after), 1);
+        assert_eq!(dock_ops(0, &before, &after, &HashMap::new()), 1);
     }
 
     #[test]
     fn dock_ops_uneven_swap_takes_the_bigger_side() {
         let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 1)]))]);
         let after = world(vec![("v1", vessel(DOCKED_0, &[(2, 3)]))]);
-        assert_eq!(dock_ops(0, &before, &after), 3);
+        assert_eq!(dock_ops(0, &before, &after, &HashMap::new()), 3);
     }
 
     #[test]
     fn dock_ops_load_then_unload_same_cargo_is_zero() {
         let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 2)]))]);
-        assert_eq!(dock_ops(0, &before, &before.clone()), 0);
+        assert_eq!(dock_ops(0, &before, &before.clone(), &HashMap::new()), 0);
     }
 
     #[test]
@@ -1303,7 +1330,7 @@ mod tests {
             ("v1", vessel(DOCKED_0, &[(2, 1)])),
             ("v2", vessel(DOCKED_0, &[])),
         ]);
-        assert_eq!(dock_ops(0, &before, &after), 2);
+        assert_eq!(dock_ops(0, &before, &after, &HashMap::new()), 2);
     }
 
     #[test]
@@ -1319,8 +1346,8 @@ mod tests {
             ),
             ("v2", vessel(VesselStatus::Docked { location: 0 }, &[])),
         ]);
-        assert_eq!(dock_ops(0, &before, &after), 0);
-        assert_eq!(dock_ops(1, &before, &after), 1);
+        assert_eq!(dock_ops(0, &before, &after, &HashMap::new()), 0);
+        assert_eq!(dock_ops(1, &before, &after, &HashMap::new()), 1);
     }
 
     #[test]
@@ -1331,7 +1358,7 @@ mod tests {
             "v1",
             vessel(VesselStatus::Idle { location: 0 }, &[(2, 1)]),
         )]);
-        assert_eq!(dock_ops(0, &before, &after), 1);
+        assert_eq!(dock_ops(0, &before, &after, &HashMap::new()), 1);
     }
 
     #[test]
@@ -1341,7 +1368,10 @@ mod tests {
             "v1",
             vessel(DOCKED_0, &[(1, u32::MAX), (2, u32::MAX)]),
         )]);
-        assert_eq!(dock_ops(0, &before, &after), 2 * u64::from(u32::MAX));
+        assert_eq!(
+            dock_ops(0, &before, &after, &HashMap::new()),
+            2 * u64::from(u32::MAX)
+        );
     }
 
     /// v1 docked at location 0 (throughput 2), with 2 units for 2 and 1 for 1 on the dock.
@@ -1407,7 +1437,7 @@ mod tests {
         s.transfer("v1", Some(2), None).unwrap();
         s.transfer("v1", Some(1), Some(2)).unwrap();
         assert_eq!(s.planned.vessels["v1"].cargo, Inventory::from([(1, 1)]));
-        assert_eq!(dock_ops(0, &s.committed, &s.planned), 1);
+        assert_eq!(dock_ops(0, &s.committed, &s.planned, &s.deliveries), 1);
         assert_eq!(total_cargo(&s.planned), total_cargo(&s.committed));
     }
 
@@ -1499,6 +1529,78 @@ mod tests {
             "vessel v1 would overflow its cargo for destination 2"
         );
         assert_eq!(s.planned, before);
+    }
+
+    /// v1 docked at location 0 (throughput 1), with 2 units already bound for location 0 on the dock.
+    fn own_dest_engine() -> Engine {
+        let mut e = Engine::new();
+        e.handle_line(&cargo_init_line(
+            "[1,4,1]",
+            r#"[{"location":0,"destination":0,"quantity":2}]"#,
+        ));
+        e.handle_line(&dock("v1"));
+        e.handle_line(TICK);
+        e
+    }
+
+    #[test]
+    fn delivery_counts_as_one_op() {
+        let mut e = own_dest_engine();
+        let s = sim(&mut e);
+        s.committed.vessels["v1"].cargo = Inventory::from([(0, 1)]);
+        s.planned = s.committed.clone();
+        s.transfer("v1", None, Some(0)).unwrap();
+        assert_eq!(dock_ops(0, &s.committed, &s.planned, &s.deliveries), 1);
+    }
+
+    #[test]
+    fn load_then_deliver_the_same_unit_is_not_free() {
+        let mut e = own_dest_engine();
+        let s = sim(&mut e);
+        s.transfer("v1", Some(0), None).unwrap();
+        s.transfer("v1", None, Some(0)).unwrap();
+        // the vessel's cargo is back where it was, but a unit left the sim
+        assert_eq!(s.planned.vessels["v1"].cargo, Inventory::new());
+        assert_eq!(s.planned.docks[0], Inventory::from([(0, 1)]));
+        assert_eq!(dock_ops(0, &s.committed, &s.planned, &s.deliveries), 1);
+        assert_eq!(
+            s.transfer("v1", Some(0), None).unwrap_err().to_string(),
+            "transfer of 2 operations exceeds dock throughput of 1 at location 0"
+        );
+    }
+
+    #[test]
+    fn swap_that_delivers_and_reloads_counts_one_op() {
+        let mut e = own_dest_engine();
+        let s = sim(&mut e);
+        s.committed.vessels["v1"].cargo = Inventory::from([(0, 1)]);
+        s.planned = s.committed.clone();
+        s.transfer("v1", Some(0), Some(0)).unwrap();
+        assert_eq!(s.planned.vessels["v1"].cargo, Inventory::from([(0, 1)]));
+        assert_eq!(s.planned.docks[0], Inventory::from([(0, 1)]));
+        assert_eq!(dock_ops(0, &s.committed, &s.planned, &s.deliveries), 1);
+    }
+
+    #[test]
+    fn rejected_delivery_is_not_remembered() {
+        let mut e = own_dest_engine();
+        let s = sim(&mut e);
+        s.committed.vessels["v1"].cargo = Inventory::from([(0, 2)]);
+        s.planned = s.committed.clone();
+        s.transfer("v1", None, Some(0)).unwrap();
+        assert!(s.transfer("v1", None, Some(0)).is_err());
+        assert_eq!(s.deliveries, HashMap::from([("v1".to_owned(), 1)]));
+    }
+
+    #[test]
+    fn tick_forgets_deliveries() {
+        let mut e = own_dest_engine();
+        let s = sim(&mut e);
+        s.committed.vessels["v1"].cargo = Inventory::from([(0, 1)]);
+        s.planned = s.committed.clone();
+        s.transfer("v1", None, Some(0)).unwrap();
+        e.handle_line(TICK);
+        assert!(sim(&mut e).deliveries.is_empty());
     }
 
     fn assert_invalid_command(response: &str, unknown_field: &str) {
