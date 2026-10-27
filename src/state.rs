@@ -1,4 +1,4 @@
-//! Plain world-state data. No validation or rules live here.
+//! Just the world-state data types. Validation and rules are in engine.rs.
 
 use indexmap::IndexMap;
 

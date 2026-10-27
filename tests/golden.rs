@@ -1,9 +1,9 @@
-//! Golden tests: each `tests/golden/NAME.in.jsonl` is fed line by line to a fresh engine and every
-//! response is compared against the matching line of `NAME.out.jsonl`.
-//! Comparison uses parsed JSON, so object key order doesn't matter but array order does.
+//! Golden tests. Each `tests/golden/NAME.in.jsonl` gets fed line by line into a fresh engine and
+//! each response is checked against the same line in `NAME.out.jsonl`. Lines are compared as
+//! parsed JSON, so key order doesn't matter (array order still does).
 //!
-//! Each fixture gets its own test so cases can be enabled one at a time. A fixture that isn't
-//! registered in `golden!` below fails `all_fixtures_registered`.
+//! One test per fixture so they can be turned on one at a time. If you add a fixture and forget
+//! to put it in `golden!` below, `all_fixtures_registered` fails.
 
 use std::fs;
 use std::path::Path;

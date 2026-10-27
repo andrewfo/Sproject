@@ -1,9 +1,9 @@
-//! Simulation rules: committed vs planned state, ticks, cargo ops, history.
+//! The actual sim rules live here (ticks, movement, cargo, history).
 //!
-//! Invariants:
-//! - `planned == committed` right after every tick.
-//! - Status checks (idle/docked) validate against `committed`; inventory checks validate against `planned`.
-//! - Every handler validates fully before mutating, so a rejected command changes nothing.
+//! A few things that should always hold:
+//! - planned and committed are the same right after a tick
+//! - idle/docked checks look at committed, cargo checks look at planned
+//! - handlers check everything before changing anything, so an error leaves state alone
 
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -151,9 +151,31 @@ impl Sim {
         }
     }
 
-    // TODO: validate manifest, advance planned → committed, apply arrivals, add manifest, push history.
-    fn tick(&mut self, _params: TickParams) -> Result<(), SimError> {
-        Err(SimError::NotImplemented("tick"))
+    /// A vessel whose arrival tick is the new tick shows up as idle at its destination right away.
+    // TODO: cargo mode — validate and add the tick's manifest.
+    fn tick(&mut self, params: TickParams) -> Result<(), SimError> {
+        if !params.cargo_manifest.is_empty() {
+            return Err(SimError::NotImplemented("cargo"));
+        }
+
+        let mut next = self.planned.clone();
+        next.tick += 1;
+        for vessel in next.vessels.values_mut() {
+            if let VesselStatus::Transit {
+                to,
+                arrives_at_tick,
+                ..
+            } = vessel.status
+                && arrives_at_tick == next.tick
+            {
+                vessel.status = VesselStatus::Idle { location: to };
+            }
+        }
+
+        self.committed = next.clone();
+        self.planned = next.clone();
+        self.history.push(next);
+        Ok(())
     }
 
     /// Setting the destination to the vessel's current location cancels a pending move.
@@ -247,6 +269,7 @@ mod tests {
 
     const TT: &str = "[[0,4,7],[4,0,3],[7,3,0]]";
     const GET_STATE: &str = r#"{"command":"get_state","parameters":{}}"#;
+    const TICK: &str = r#"{"command":"tick","parameters":{}}"#;
 
     fn init_line(travel_times: &str, vessels: &str) -> String {
         format!(
@@ -470,10 +493,9 @@ mod tests {
     #[test]
     fn set_destination_arrival_uses_current_tick() {
         let mut e = initialized();
-        // Tick isn't implemented yet, so put the world at tick 4 by hand.
-        let sim = e.sim.as_mut().unwrap();
-        sim.committed.tick = 4;
-        sim.planned.tick = 4;
+        for _ in 0..4 {
+            e.handle_line(TICK);
+        }
         e.handle_line(&set_dest("v2", 1));
         assert_eq!(
             planned_status(&e, "v2"),
@@ -520,5 +542,92 @@ mod tests {
     fn set_destination_checks_vessel_before_location() {
         let mut e = initialized();
         assert_error(&e.handle_line(&set_dest("nope", 9)), "unknown vessel nope");
+    }
+
+    fn committed_status(e: &Engine, vessel: &str) -> VesselStatus {
+        e.sim.as_ref().unwrap().committed.vessels[vessel]
+            .status
+            .clone()
+    }
+
+    #[test]
+    fn tick_advances_and_commits_the_plan() {
+        let mut e = initialized();
+        e.handle_line(&set_dest("v1", 1));
+        let out: Value = serde_json::from_str(&e.handle_line(TICK)).unwrap();
+        assert_eq!(out["payload"]["tick"], 1);
+        let sim = e.sim.as_ref().unwrap();
+        assert_eq!(sim.committed, sim.planned);
+        assert_eq!(sim.history.len(), 2);
+        assert_eq!(sim.history[1], sim.committed);
+        assert_eq!(
+            committed_status(&e, "v1"),
+            VesselStatus::Transit {
+                from: 0,
+                to: 1,
+                arrives_at_tick: 4
+            }
+        );
+    }
+
+    #[test]
+    fn vessel_is_idle_on_its_arrival_tick() {
+        let mut e = initialized();
+        e.handle_line(&set_dest("v1", 1));
+        for _ in 0..3 {
+            e.handle_line(TICK);
+        }
+        assert!(matches!(
+            committed_status(&e, "v1"),
+            VesselStatus::Transit { .. }
+        ));
+        e.handle_line(TICK);
+        assert_eq!(
+            committed_status(&e, "v1"),
+            VesselStatus::Idle { location: 1 }
+        );
+    }
+
+    #[test]
+    fn vessel_can_be_recommanded_on_arrival_tick() {
+        let mut e = initialized();
+        e.handle_line(&set_dest("v1", 1));
+        for _ in 0..4 {
+            e.handle_line(TICK);
+        }
+        e.handle_line(&set_dest("v1", 2));
+        assert_eq!(
+            planned_status(&e, "v1"),
+            VesselStatus::Transit {
+                from: 1,
+                to: 2,
+                arrives_at_tick: 7
+            }
+        );
+    }
+
+    #[test]
+    fn history_keeps_earlier_ticks() {
+        let mut e = initialized();
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(TICK);
+        e.handle_line(TICK);
+        let sim = e.sim.as_ref().unwrap();
+        assert_eq!(
+            sim.history[0].vessels["v1"].status,
+            VesselStatus::Idle { location: 0 }
+        );
+        assert_eq!(sim.history[0].tick, 0);
+        assert_eq!(sim.history[2].tick, 2);
+    }
+
+    #[test]
+    fn tick_with_no_vessels_works() {
+        let mut e = Engine::new();
+        e.handle_line(&init_line("[[0]]", "[]"));
+        assert_eq!(
+            e.handle_line(TICK),
+            r#"{"status":"ok","payload":{"tick":1,"vessels":{}}}"#
+        );
     }
 }

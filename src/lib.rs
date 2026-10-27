@@ -1,4 +1,4 @@
-//! Discrete-time fleet simulation engine driven by NDJSON commands.
+//! Fleet sim engine. Reads NDJSON commands, writes one JSON response per command.
 
 pub mod engine;
 pub mod error;

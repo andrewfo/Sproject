@@ -1,4 +1,4 @@
-//! Wire format: command parsing and response rendering.
+//! JSON in and out: parsing commands and rendering responses.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
