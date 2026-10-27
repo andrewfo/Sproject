@@ -11,7 +11,10 @@ pub enum SimError {
     InvalidInit(String),
     InvalidManifest(String),
     UnknownVessel(String),
-    LocationOutOfRange(Location),
+    LocationOutOfRange {
+        location: Location,
+        max: Location,
+    },
     NotIdle(String),
     ArrivalOverflow {
         from: Location,
@@ -48,7 +51,9 @@ impl fmt::Display for SimError {
             SimError::InvalidInit(why) => write!(f, "invalid init: {why}"),
             SimError::InvalidManifest(why) => write!(f, "invalid manifest: {why}"),
             SimError::UnknownVessel(id) => write!(f, "unknown vessel {id}"),
-            SimError::LocationOutOfRange(loc) => write!(f, "location {loc} is out of range"),
+            SimError::LocationOutOfRange { location, max } => {
+                write!(f, "location {location} is out of range (0 to {max})")
+            }
             SimError::NotIdle(id) => write!(f, "vessel {id} is not idle"),
             SimError::ArrivalOverflow { from, to } => {
                 write!(f, "travel from {from} to {to} overflows the tick counter")

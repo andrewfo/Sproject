@@ -178,7 +178,10 @@ impl Sim {
         if loc < self.config.num_locations() {
             Ok(())
         } else {
-            Err(SimError::LocationOutOfRange(loc))
+            Err(SimError::LocationOutOfRange {
+                location: loc,
+                max: self.config.num_locations() - 1,
+            })
         }
     }
 
@@ -766,7 +769,7 @@ mod tests {
         let mut e = initialized();
         assert_error(
             &e.handle_line(&set_dest("v1", 3)),
-            "location 3 is out of range",
+            "location 3 is out of range (0 to 2)",
         );
         assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
     }
@@ -1354,12 +1357,6 @@ mod tests {
     }
 
     #[test]
-    fn dock_ops_load_then_unload_same_cargo_is_zero() {
-        let before = world(vec![("v1", vessel(DOCKED_0, &[(1, 2)]))]);
-        assert_eq!(dock_ops(0, &before, &before.clone(), &HashMap::new()), 0);
-    }
-
-    #[test]
     fn dock_ops_adds_up_vessels_at_the_same_dock() {
         let before = world(vec![
             ("v1", vessel(DOCKED_0, &[])),
@@ -1552,7 +1549,7 @@ mod tests {
         );
         assert_eq!(
             s.transfer("v1", None, Some(9)).unwrap_err().to_string(),
-            "location 9 is out of range"
+            "location 9 is out of range (0 to 2)"
         );
     }
 
@@ -1568,6 +1565,33 @@ mod tests {
             "vessel v1 would overflow its cargo for destination 2"
         );
         assert_eq!(s.planned, before);
+    }
+
+    #[test]
+    fn transfer_rejects_a_dock_cargo_overflow() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.committed.docks[0] = Inventory::from([(2, u32::MAX)]);
+        s.committed.vessels["v1"].cargo = Inventory::from([(2, 1)]);
+        s.planned = s.committed.clone();
+        let before = s.planned.clone();
+        assert_eq!(
+            s.transfer("v1", None, Some(2)).unwrap_err().to_string(),
+            "dock at location 0 would overflow its cargo for destination 2"
+        );
+        assert_eq!(s.planned, before);
+    }
+
+    #[test]
+    fn load_then_unload_of_the_same_cargo_costs_nothing() {
+        let mut e = stocked_engine();
+        let s = sim(&mut e);
+        s.transfer("v1", Some(1), None).unwrap();
+        s.transfer("v1", None, Some(1)).unwrap();
+        assert_eq!(dock_ops(0, &s.committed, &s.planned, &s.deliveries), 0);
+        // so the full throughput of 2 is still there
+        s.transfer("v1", Some(2), None).unwrap();
+        s.transfer("v1", Some(2), None).unwrap();
     }
 
     /// v1 docked at location 0 (throughput 1), with 2 units already bound for location 0 on the dock.
