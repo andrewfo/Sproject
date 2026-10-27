@@ -166,7 +166,7 @@ impl Sim {
                 arrives_at_tick,
                 ..
             } = vessel.status
-                && arrives_at_tick == next.tick
+                && arrives_at_tick <= next.tick
             {
                 vessel.status = VesselStatus::Idle { location: to };
             }
@@ -189,10 +189,18 @@ impl Sim {
         let status = if destination == from {
             VesselStatus::Idle { location: from }
         } else {
+            let arrives_at_tick = self
+                .committed
+                .tick
+                .checked_add(self.config.travel_times[from][destination])
+                .ok_or(SimError::ArrivalOverflow {
+                    from,
+                    to: destination,
+                })?;
             VesselStatus::Transit {
                 from,
                 to: destination,
-                arrives_at_tick: self.committed.tick + self.config.travel_times[from][destination],
+                arrives_at_tick,
             }
         };
         self.planned.vessels[vessel_id].status = status;
@@ -628,6 +636,37 @@ mod tests {
         assert_eq!(
             e.handle_line(TICK),
             r#"{"status":"ok","payload":{"tick":1,"vessels":{}}}"#
+        );
+    }
+
+    #[test]
+    fn set_destination_rejects_arrival_overflow() {
+        let mut e = Engine::new();
+        e.handle_line(&init_line(
+            "[[0,18446744073709551615],[1,0]]",
+            r#"[{"id":"v1","location":0}]"#,
+        ));
+        e.handle_line(TICK);
+        assert_error(
+            &e.handle_line(&set_dest("v1", 1)),
+            "travel from 0 to 1 overflows the tick counter",
+        );
+        assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
+    }
+
+    #[test]
+    fn overdue_transit_arrives_on_next_tick() {
+        let mut e = initialized();
+        let sim = e.sim.as_mut().unwrap();
+        sim.planned.vessels["v1"].status = VesselStatus::Transit {
+            from: 0,
+            to: 1,
+            arrives_at_tick: 0,
+        };
+        e.handle_line(TICK);
+        assert_eq!(
+            committed_status(&e, "v1"),
+            VesselStatus::Idle { location: 1 }
         );
     }
 }

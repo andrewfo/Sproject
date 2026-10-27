@@ -12,6 +12,10 @@ pub enum SimError {
     UnknownVessel(String),
     LocationOutOfRange(Location),
     NotIdle(String),
+    ArrivalOverflow {
+        from: Location,
+        to: Location,
+    },
     NotDocked(String),
     InsufficientCargo {
         what: String,
@@ -40,6 +44,9 @@ impl fmt::Display for SimError {
             SimError::UnknownVessel(id) => write!(f, "unknown vessel {id}"),
             SimError::LocationOutOfRange(loc) => write!(f, "location {loc} is out of range"),
             SimError::NotIdle(id) => write!(f, "vessel {id} is not idle"),
+            SimError::ArrivalOverflow { from, to } => {
+                write!(f, "travel from {from} to {to} overflows the tick counter")
+            }
             SimError::NotDocked(id) => write!(f, "vessel {id} is not docked"),
             SimError::InsufficientCargo { what, destination } => {
                 write!(f, "{what} has no cargo for destination {destination}")
