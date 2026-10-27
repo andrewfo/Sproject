@@ -32,16 +32,11 @@ impl Engine {
 
     /// Parses one input line, runs it, and returns the response line (always a single JSON object).
     pub fn handle_line(&mut self, line: &str) -> String {
-        let result = protocol::parse_command(line).and_then(|cmd| self.handle(cmd));
-        let response = match result {
-            Ok(payload) => protocol::ok_response(payload),
-            Err(err) => protocol::error_response(&err),
-        };
-        response.to_string()
+        protocol::render_response(protocol::parse_command(line).and_then(|cmd| self.handle(cmd)))
     }
 
     /// Runs a parsed command and returns the WorldState payload.
-    pub fn handle(&mut self, cmd: Command) -> Result<Value, SimError> {
+    fn handle(&mut self, cmd: Command) -> Result<Value, SimError> {
         match (&mut self.sim, cmd) {
             (None, Command::Init(params)) => {
                 let sim = Sim::init(params)?;
@@ -235,11 +230,6 @@ mod tests {
         init_line(TT, r#"[{"id":"v1","location":0},{"id":"v2","location":2}]"#)
     }
 
-    /// Runs a line and returns the raw response string.
-    fn run(engine: &mut Engine, line: &str) -> String {
-        engine.handle_line(line)
-    }
-
     fn assert_error(response: &str, message: &str) {
         let v: Value = serde_json::from_str(response).unwrap();
         assert_eq!(v["status"], "error", "expected error, got {response}");
@@ -250,7 +240,7 @@ mod tests {
     fn init_renders_tick_zero() {
         let mut e = Engine::new();
         assert_eq!(
-            run(&mut e, &std_init()),
+            e.handle_line(&std_init()),
             r#"{"status":"ok","payload":{"tick":0,"vessels":{"v1":{"state":"idle","location":0},"v2":{"state":"idle","location":2}}}}"#
         );
     }
@@ -258,10 +248,10 @@ mod tests {
     #[test]
     fn init_keeps_vessel_order() {
         let mut e = Engine::new();
-        let out = run(
-            &mut e,
-            &init_line(TT, r#"[{"id":"zz","location":1},{"id":"aa","location":0}]"#),
-        );
+        let out = e.handle_line(&init_line(
+            TT,
+            r#"[{"id":"zz","location":1},{"id":"aa","location":0}]"#,
+        ));
         assert!(out.find("\"zz\"").unwrap() < out.find("\"aa\"").unwrap());
     }
 
@@ -269,7 +259,7 @@ mod tests {
     fn init_with_no_vessels_is_ok() {
         let mut e = Engine::new();
         assert_eq!(
-            run(&mut e, &init_line("[[0]]", "[]")),
+            e.handle_line(&init_line("[[0]]", "[]")),
             r#"{"status":"ok","payload":{"tick":0,"vessels":{}}}"#
         );
     }
@@ -278,7 +268,7 @@ mod tests {
     fn init_rejects_empty_matrix() {
         let mut e = Engine::new();
         assert_error(
-            &run(&mut e, &init_line("[]", "[]")),
+            &e.handle_line(&init_line("[]", "[]")),
             "invalid init: travel_times must have at least one location",
         );
     }
@@ -287,7 +277,7 @@ mod tests {
     fn init_rejects_non_square_matrix() {
         let mut e = Engine::new();
         assert_error(
-            &run(&mut e, &init_line("[[0,1],[1,0,2]]", "[]")),
+            &e.handle_line(&init_line("[[0,1],[1,0,2]]", "[]")),
             "invalid init: travel_times must be square: row 1 has 3 entries, expected 2",
         );
     }
@@ -296,7 +286,7 @@ mod tests {
     fn init_rejects_nonzero_diagonal() {
         let mut e = Engine::new();
         assert_error(
-            &run(&mut e, &init_line("[[0,1],[1,5]]", "[]")),
+            &e.handle_line(&init_line("[[0,1],[1,5]]", "[]")),
             "invalid init: travel_times[1][1] must be 0",
         );
     }
@@ -305,7 +295,7 @@ mod tests {
     fn init_rejects_zero_off_diagonal() {
         let mut e = Engine::new();
         assert_error(
-            &run(&mut e, &init_line("[[0,0],[1,0]]", "[]")),
+            &e.handle_line(&init_line("[[0,0],[1,0]]", "[]")),
             "invalid init: travel_times[0][1] must be positive",
         );
     }
@@ -313,7 +303,7 @@ mod tests {
     #[test]
     fn init_rejects_negative_travel_time() {
         let mut e = Engine::new();
-        let out = run(&mut e, &init_line("[[0,-1],[1,0]]", "[]"));
+        let out = e.handle_line(&init_line("[[0,-1],[1,0]]", "[]"));
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["status"], "error");
         assert!(
@@ -328,10 +318,10 @@ mod tests {
     fn init_rejects_duplicate_vessel_ids() {
         let mut e = Engine::new();
         assert_error(
-            &run(
-                &mut e,
-                &init_line(TT, r#"[{"id":"v1","location":0},{"id":"v1","location":1}]"#),
-            ),
+            &e.handle_line(&init_line(
+                TT,
+                r#"[{"id":"v1","location":0},{"id":"v1","location":1}]"#,
+            )),
             "invalid init: duplicate vessel id v1",
         );
     }
@@ -340,7 +330,7 @@ mod tests {
     fn init_rejects_out_of_range_location() {
         let mut e = Engine::new();
         assert_error(
-            &run(&mut e, &init_line(TT, r#"[{"id":"v1","location":3}]"#)),
+            &e.handle_line(&init_line(TT, r#"[{"id":"v1","location":3}]"#)),
             "invalid init: vessel v1 location 3 is out of range (0 to 2)",
         );
     }
@@ -348,15 +338,18 @@ mod tests {
     #[test]
     fn second_init_is_rejected() {
         let mut e = Engine::new();
-        run(&mut e, &std_init());
-        assert_error(&run(&mut e, &std_init()), "simulation already initialized");
+        e.handle_line(&std_init());
+        assert_error(
+            &e.handle_line(&std_init()),
+            "simulation already initialized",
+        );
     }
 
     #[test]
     fn commands_before_init_are_rejected() {
         let mut e = Engine::new();
         assert_error(
-            &run(&mut e, r#"{"command":"get_state","parameters":{}}"#),
+            &e.handle_line(r#"{"command":"get_state","parameters":{}}"#),
             "simulation not initialized; send init first",
         );
     }
@@ -364,20 +357,20 @@ mod tests {
     #[test]
     fn failed_init_leaves_engine_uninitialized() {
         let mut e = Engine::new();
-        run(&mut e, &init_line("[[0,1],[1,5]]", "[]"));
+        e.handle_line(&init_line("[[0,1],[1,5]]", "[]"));
         assert_error(
-            &run(&mut e, r#"{"command":"get_state","parameters":{}}"#),
+            &e.handle_line(r#"{"command":"get_state","parameters":{}}"#),
             "simulation not initialized; send init first",
         );
         // and a corrected init still goes through
-        let v: Value = serde_json::from_str(&run(&mut e, &std_init())).unwrap();
+        let v: Value = serde_json::from_str(&e.handle_line(&std_init())).unwrap();
         assert_eq!(v["status"], "ok");
     }
 
     #[test]
     fn init_seeds_committed_planned_and_history() {
         let mut e = Engine::new();
-        run(&mut e, &std_init());
+        e.handle_line(&std_init());
         let sim = e.sim.as_ref().unwrap();
         assert_eq!(sim.committed, sim.planned);
         assert_eq!(sim.history, vec![sim.committed.clone()]);

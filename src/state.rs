@@ -40,7 +40,7 @@ pub struct World {
 }
 
 /// Static configuration fixed at `init`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Config {
     pub travel_times: Vec<Vec<u64>>,
     /// `None` means base mode: no docks or cargo, and no `cargo` fields in output.

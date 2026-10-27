@@ -6,31 +6,25 @@
 //! registered in `golden!` below fails `all_fixtures_registered`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fleet_sim::Engine;
 use serde_json::Value;
 
-fn run_case(input: &Path) {
-    let expected_path = input.with_file_name(
-        input
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .replace(".in.jsonl", ".out.jsonl"),
-    );
-    let inputs = fs::read_to_string(input).unwrap();
-    let expected = fs::read_to_string(&expected_path)
-        .unwrap_or_else(|_| panic!("missing {}", expected_path.display()));
+fn run_case(name: &str) {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+    let read = |ext: &str| {
+        let path = dir.join(format!("{name}.{ext}.jsonl"));
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("missing {}", path.display()))
+    };
+    let (inputs, expected) = (read("in"), read("out"));
 
     let inputs: Vec<&str> = inputs.lines().filter(|l| !l.trim().is_empty()).collect();
     let expected: Vec<&str> = expected.lines().filter(|l| !l.trim().is_empty()).collect();
     assert_eq!(
         inputs.len(),
         expected.len(),
-        "{}: input/output line counts differ",
-        input.display()
+        "{name}: input/output line counts differ"
     );
 
     let mut engine = Engine::new();
@@ -40,15 +34,10 @@ fn run_case(input: &Path) {
         assert_eq!(
             got,
             want,
-            "{} line {}\n  cmd:  {cmd}\n  got:  {got}\n  want: {want}",
-            input.display(),
+            "{name} line {}\n  cmd:  {cmd}\n  got:  {got}\n  want: {want}",
             i + 1
         );
     }
-}
-
-fn golden_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
 }
 
 macro_rules! golden {
@@ -58,7 +47,7 @@ macro_rules! golden {
             #[test]
             $(#[$attr])*
             fn $name() {
-                run_case(&golden_dir().join(concat!(stringify!($name), ".in.jsonl")));
+                run_case(stringify!($name));
             }
         )*
     };
@@ -75,14 +64,15 @@ golden! {
 
 #[test]
 fn all_fixtures_registered() {
-    let mut unregistered: Vec<String> = fs::read_dir(golden_dir())
-        .unwrap()
-        .filter_map(|e| {
-            let name = e.unwrap().file_name().into_string().unwrap();
-            name.strip_suffix(".in.jsonl").map(str::to_owned)
-        })
-        .filter(|name| !REGISTERED.contains(&name.as_str()))
-        .collect();
+    let mut unregistered: Vec<String> =
+        fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden"))
+            .unwrap()
+            .filter_map(|e| {
+                let name = e.unwrap().file_name().into_string().unwrap();
+                name.strip_suffix(".in.jsonl").map(str::to_owned)
+            })
+            .filter(|name| !REGISTERED.contains(&name.as_str()))
+            .collect();
     unregistered.sort();
     assert!(
         unregistered.is_empty(),

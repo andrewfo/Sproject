@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::error::SimError;
 use crate::state::{Location, VesselId, VesselStatus, World};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "command", content = "parameters", rename_all = "snake_case")]
 pub enum Command {
     Init(InitParams),
@@ -41,7 +41,7 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct InitParams {
     pub travel_times: Vec<Vec<u64>>,
     pub vessels: Vec<VesselSpec>,
@@ -51,19 +51,19 @@ pub struct InitParams {
     pub cargo_manifest: Vec<ManifestEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct VesselSpec {
     pub id: VesselId,
     pub location: Location,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct TickParams {
     #[serde(default)]
     pub cargo_manifest: Vec<ManifestEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ManifestEntry {
     pub location: Location,
     pub destination: Location,
@@ -74,12 +74,13 @@ pub fn parse_command(line: &str) -> Result<Command, SimError> {
     serde_json::from_str(line).map_err(|e| SimError::InvalidCommand(e.to_string()))
 }
 
-pub fn ok_response(payload: Value) -> Value {
-    json!({ "status": "ok", "payload": payload })
-}
-
-pub fn error_response(err: &SimError) -> Value {
-    json!({ "status": "error", "payload": { "message": err.to_string() } })
+/// Wraps a command result in the spec's response envelope and serializes it to one line.
+pub fn render_response(result: Result<Value, SimError>) -> String {
+    match result {
+        Ok(payload) => json!({ "status": "ok", "payload": payload }),
+        Err(err) => json!({ "status": "error", "payload": { "message": err.to_string() } }),
+    }
+    .to_string()
 }
 
 /// Renders a world to the spec's `WorldState` JSON. `cargo` fields appear only when cargo is enabled.
