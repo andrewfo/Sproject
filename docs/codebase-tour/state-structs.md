@@ -12,7 +12,8 @@ Engine
     │   └── dock_throughput   Option<Vec<u32>>; None = base mode (no cargo)
     ├── committed: World      what's true as of the last tick
     ├── planned: World        committed + changes queued since the last tick
-    └── history: Vec<World>   history[t] = committed world at tick t
+    ├── history: Vec<World>   history[t] = committed world at tick t
+    └── deliveries            units each vessel delivered since the last tick (for dock_ops)
 ```
 
 ```
@@ -35,7 +36,7 @@ Commands issued between ticks don't change reality right away. They edit `planne
 turns `planned` into the new `committed` world.
 
 ```
-         set_destination, (later: dock, load, ...)
+  set_destination, dock, undock, load, unload, swap
                 │ edit
                 ▼
  committed ── clone at tick ──▶ planned ──┐
@@ -62,7 +63,7 @@ turns `planned` into the new `committed` world.
 3. Clone `planned` into `next`, increment `next.tick`.
 4. Every vessel in `Transit` with `arrives_at_tick <= next.tick` becomes `Idle` at `to`.
 5. Apply the manifest to `next.docks` (this can still fail on `u32` overflow).
-6. Set `committed = planned = next`, and push `next` onto `history`.
+6. Set `committed = planned = next`, push `next` onto `history`, and clear `deliveries`.
 
 If anything fails before step 6, the real state is untouched because all work happened on `next`.
 
@@ -74,10 +75,11 @@ destination right away.
 `Config::cargo_enabled()` is just `dock_throughput.is_some()`. In base mode:
 
 - `cargo_manifest` on `init` or `tick` is an error,
+- `dock`, `undock`, `load`, `unload`, and `swap` are errors,
 - `docks` are still allocated but always empty,
 - rendered output has no `cargo` fields at all (vessel or world level).
 
 ## History
 
 `history` starts with the tick-0 world from `init` and gets one entry per successful tick, so
-`history.len() == committed.tick + 1`. The `get_state_at` query that reads it isn't wired up yet.
+`history.len() == committed.tick + 1`. `get_state_at(t)` renders `history[t]`.

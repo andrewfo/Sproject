@@ -20,6 +20,7 @@ A checklist that follows the existing pattern.
 6. **Docs.** Update [protocol/commands.md](../protocol/commands.md),
    [protocol/errors.md](../protocol/errors.md), and the status table in the
    [docs index](../README.md).
-7. **Golden.** If a spec fixture covers it, remove its `#[ignore]` in `tests/golden.rs`.
+7. **Golden.** If it's worth an end-to-end example, add a fixture pair (see
+   [adding a golden test](adding-a-golden-test.md)).
 
-Run `cargo test -- --include-ignored && cargo clippy --all-targets` before committing.
+Run `cargo test && cargo clippy --all-targets` before committing.

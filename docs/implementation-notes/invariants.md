@@ -7,7 +7,7 @@ These hold after every command. The first three are also listed at the top of `s
 | # | Invariant | Enforced by |
 |---|---|---|
 | 1 | Right after a tick, `planned == committed`. | `Sim::tick` assigns both from the same `next` |
-| 2 | Idle/docked checks read **committed**; cargo checks read **planned**. | `committed_vessel` helper; cargo handlers (planned) |
+| 2 | Idle/docked checks read **committed**; cargo checks read **planned**. | `committed_vessel` helper; `transfer` works on a scratch copy of planned |
 | 3 | A failed command leaves state exactly as it was. | Handlers validate fully before mutating, or work on a scratch copy |
 | 4 | `history[t]` is the committed world at tick `t`, and `history.len() == tick + 1`. | `init` seeds it, `tick` pushes |
 | 5 | Every vessel location, transit endpoint, and manifest location is in `0..N`. | `validate_*`, `check_location` |

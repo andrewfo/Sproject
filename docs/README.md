@@ -46,5 +46,5 @@ Start here. Each folder covers one topic, and every page links back to this inde
 | Feature | Commands | Status |
 |---|---|---|
 | Base sim | `init`, `tick`, `set_destination`, `get_state` | done |
-| Cargo & docks | `dock`, `undock`, `load`, `unload`, `swap`, cargo manifests | manifests done; vessel commands return "not implemented yet" |
-| History | `get_state_at` | history is recorded every tick; the query returns "not implemented yet" |
+| Cargo & docks | `dock`, `undock`, `load`, `unload`, `swap`, cargo manifests | done |
+| History | `get_state_at` | done |

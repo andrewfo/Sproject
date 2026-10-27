@@ -23,7 +23,7 @@ Engine::handle(Command)                                            │
    ▼                                                               │
 Sim::dispatch                                                      │
    │  run handler → Ok(()) or Err(SimError)                        │
-   │  on Ok: render planned world (get_state_at will render history)
+   │  on Ok: render planned world, or history for get_state_at     │
    ▼                                                               │
 protocol::render_response(Result<Value, SimError>) ◀───────────────┘
    │

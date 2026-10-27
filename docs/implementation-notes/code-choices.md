@@ -28,7 +28,7 @@ except for the few stdin edge cases in `tests/cli.rs`.
 ## History as `Vec<World>` snapshots
 
 **Choice.** Store a full committed world per tick.
-**Buys.** `get_state_at(t)` will be an index lookup, with no replay and no event log to keep
+**Buys.** `get_state_at(t)` is an index lookup, with no replay and no event log to keep
 consistent.
 **Costs.** Memory grows linearly with ticks × fleet size. Structural sharing or diffs would cut
 that, and it would only matter for very long runs.
@@ -56,8 +56,9 @@ tick field doesn't advance the clock.
 
 ## Signed `tick` in `get_state_at`
 
-**Choice.** Parse `tick` as `i64` even though ticks are `u64`.
-**Buys.** `-1` gets a clear `tick -1 is negative` error instead of a generic serde type error.
+**Choice.** Parse `tick` as `i128` even though ticks are `u64`.
+**Buys.** `-1` gets a clear `tick -1 is negative` error instead of a generic serde type error, and
+a tick bigger than `u64::MAX` gets the normal "in the future" error instead of a parse error.
 
 ## Error text lives in `Display`
 

@@ -3,9 +3,8 @@
 [← docs index](../README.md)
 
 ```sh
-cargo test                       # unit + CLI tests, plus golden cases that aren't ignored
-cargo test -- --include-ignored  # also runs golden cases marked #[ignore]
-cargo clippy --all-targets       # lint
+cargo test                  # unit, CLI, and golden tests
+cargo clippy --all-targets  # lint
 ```
 
 ## Three layers
@@ -14,7 +13,7 @@ cargo clippy --all-targets       # lint
 |---|---|---|
 | Unit | `src/engine.rs` (`mod tests`) | Engine rules, driven through `Engine::handle_line` with JSON strings |
 | Golden | `tests/golden.rs` + `tests/golden/*.jsonl` | Full command streams from the spec, checked line by line |
-| CLI | `tests/cli.rs` | The real binary: UTF-8 errors, blank lines, CRLF |
+| CLI | `tests/cli.rs` | The real binary: UTF-8 errors, blank lines, CRLF, byte-exact golden output |
 
 ### Unit tests
 
@@ -28,11 +27,11 @@ Each `NAME.in.jsonl` is fed line by line into a fresh `Engine`. Each response is
 same line of `NAME.out.jsonl` as parsed JSON, so object key order doesn't matter but array order
 does. A failure prints the line number, the command, and both values.
 
-| Case | Status |
+| Case | Covers |
 |---|---|
-| `base_example` | runs |
-| `cargo_example` | `#[ignore]` until dock/load/unload/swap land |
-| `history_example` | `#[ignore]` until cargo commands and `get_state_at` land |
+| `base_example` | the spec's base example |
+| `cargo_example` | the spec's cargo example |
+| `history_example` | the cargo example plus its `get_state_at` queries |
 
 `all_fixtures_registered` fails if a `.in.jsonl` file exists without an entry in the `golden!`
 list. See [contributing/adding-a-golden-test.md](../contributing/adding-a-golden-test.md).
@@ -40,4 +39,5 @@ list. See [contributing/adding-a-golden-test.md](../contributing/adding-a-golden
 ### CLI tests
 
 These spawn the compiled binary (`CARGO_BIN_EXE_fleet-sim`) because stdin decoding lives in
-`main.rs`, which the engine tests can't reach.
+`main.rs`, which the engine tests can't reach. One of them also diffs raw stdout against each
+golden `.out.jsonl` byte for byte, since the golden tests themselves ignore key order.

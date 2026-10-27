@@ -14,8 +14,7 @@ You can also run it interactively: `cargo run`, then type commands one per line.
 ## Test
 
 ```sh
-cargo test                       # unit tests
-cargo test -- --include-ignored  # also runs the golden spec examples
+cargo test   # unit, CLI, and golden spec examples
 ```
 
 Golden cases are in `tests/golden/`. Each `NAME.in.jsonl` is a command stream, and the matching

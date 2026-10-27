@@ -6,7 +6,7 @@ Defines `SimError`, the single error type for the whole crate.
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SimError { /* 15 variants */ }
+pub enum SimError { /* 16 variants */ }
 
 impl fmt::Display for SimError { /* exact wire message */ }
 impl std::error::Error for SimError {}

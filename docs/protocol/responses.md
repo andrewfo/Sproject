@@ -61,4 +61,4 @@ top-level `cargo` array of dock inventory:
 | Command | Payload |
 |---|---|
 | everything except `get_state_at` | planned world |
-| `get_state_at` (planned) | committed world from history |
+| `get_state_at` | committed world from history |

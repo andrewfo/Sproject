@@ -15,7 +15,7 @@ JSON in and out. It has no sim rules.
 | `ManifestEntry` | struct | `location`, `destination`, `quantity: u32` |
 
 All structs use `deny_unknown_fields`. `GetState {}` is an empty struct variant so it still
-requires `"parameters": {}`. `GetStateAt.tick` is `i64` on purpose (see
+requires `"parameters": {}`. `GetStateAt.tick` is `i128` on purpose (see
 [code choices](../implementation-notes/code-choices.md#signed-tick-in-get_state_at)).
 
 Travel times parse as `u64`, so negative values fail at parse time with `InvalidCommand`.

@@ -13,16 +13,18 @@ Every error is `{"status":"error","payload":{"message":"..."}}`. The text comes 
 | `InvalidInit` | `invalid init: <reason>` | `init` validation |
 | `InvalidManifest` | `invalid manifest: <reason>` | `tick` manifest validation |
 | `UnknownVessel` | `unknown vessel <id>` | vessel commands |
-| `LocationOutOfRange` | `location <loc> is out of range` | `set_destination` |
-| `NotIdle` | `vessel <id> is not idle` | `set_destination` on a non-idle committed vessel |
+| `LocationOutOfRange` | `location <loc> is out of range (0 to <n-1>)` | `set_destination`, cargo commands |
+| `NotIdle` | `vessel <id> is not idle` | `set_destination` on a non-idle committed vessel, `dock` on a vessel in transit |
 | `ArrivalOverflow` | `travel from <from> to <to> overflows the tick counter` | `set_destination` |
-| `NotDocked` | `vessel <id> is not docked` | cargo commands (planned) |
-| `InsufficientCargo` | `<what> has no cargo for destination <dest>` | cargo commands (planned) |
-| `CargoOverflow` | `<what> would overflow its cargo for destination <dest>` | cargo commands (planned) |
-| `ThroughputExceeded` | `transfer of <ops> operations exceeds dock throughput of <cap> at location <loc>` | cargo commands (planned) |
-| `TickInFuture` | `tick <t> is in the future (current tick: <now>)` | `get_state_at` (planned) |
-| `NegativeTick` | `tick <t> is negative` | `get_state_at` (planned) |
-| `NotImplemented` | `<command> is not implemented yet` | stubbed commands |
+| `NotDocked` | `vessel <id> is not docked` | `undock` on a vessel not docked at the last tick; `load`/`unload`/`swap` on one that isn't docked or has an undock pending |
+| `InsufficientCargo` | `<what> has no cargo for destination <dest>` | `load`/`unload`/`swap` |
+| `CargoOverflow` | `<what> would overflow its cargo for destination <dest>` | `load`/`unload`/`swap` |
+| `ThroughputExceeded` | `transfer of <ops> operations exceeds dock throughput of <cap> at location <loc>` | `load`/`unload`/`swap` |
+| `TickInFuture` | `tick <t> is in the future (current tick: <now>)` | `get_state_at` |
+| `NegativeTick` | `tick <t> is negative` | `get_state_at` |
+| `CargoDisabled` | `<command> requires dock_throughput` | `dock`/`undock`/`load`/`unload`/`swap` in base mode |
+
+`<what>` is `vessel <id>` or `dock at location <loc>`.
 
 ## `<reason>` strings
 

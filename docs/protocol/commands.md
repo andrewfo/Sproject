@@ -18,9 +18,12 @@ are `u32`.
 | [`tick`](#tick) | done | committed, planned, history |
 | [`set_destination`](#set_destination) | done | planned |
 | [`get_state`](#get_state) | done | nothing |
-| [`dock`](#dock--undock) / [`undock`](#dock--undock) | not implemented | planned |
-| [`load`](#load--unload--swap) / [`unload`](#load--unload--swap) / [`swap`](#load--unload--swap) | not implemented | planned |
-| [`get_state_at`](#get_state_at) | not implemented | nothing |
+| [`dock`](#dock--undock) / [`undock`](#dock--undock) | done | planned |
+| [`load`](#load--unload--swap) / [`unload`](#load--unload--swap) / [`swap`](#load--unload--swap) | done | planned |
+| [`get_state_at`](#get_state_at) | done | nothing |
+
+The five dock and cargo commands need cargo mode (`dock_throughput` on `init`). In base mode they
+fail with `<name> requires dock_throughput`.
 
 ---
 
@@ -64,8 +67,10 @@ A bad manifest rejects the whole tick, and the clock doesn't move.
 The vessel must be **idle in committed state**. It's planned into `transit` with
 `arrives_at_tick = committed.tick + travel_times[from][destination]`.
 
-- Calling it again before the next tick replaces the earlier plan.
+- Calling it again before the next tick replaces the earlier plan, including a pending `dock`.
 - Setting the destination to the vessel's current location cancels a pending move.
+- A vessel docked at the last tick is not idle, even with an undock pending. It can leave on the
+  tick after the undock commits.
 
 ## `get_state`
 
@@ -81,7 +86,16 @@ Returns the planned world. Changes nothing.
 {"command":"dock","parameters":{"vessel_id":"v1"}}
 ```
 
-Parsed, but currently returns `dock is not implemented yet` (same for `undock`).
+`dock` needs the vessel to be idle or docked in committed state:
+
+- committed idle → planned `docked` at its location, replacing any pending `set_destination`,
+- committed docked with an undock pending → cancels the undock,
+- already docked → no-op.
+
+`undock` needs the vessel to be docked in committed state, and plans it back to `idle`. Undocking
+twice is a no-op. Cargo ops queued earlier in the tick stay. A vessel that's only docked in the
+plan can't undock (`vessel <id> is not docked`); cancel the dock with `set_destination` to its
+current location instead.
 
 ## `load` / `unload` / `swap`
 
@@ -90,8 +104,17 @@ Parsed, but currently returns `dock is not implemented yet` (same for `undock`).
 {"command":"swap","parameters":{"vessel_id":"v1","load_destination":2,"unload_destination":1}}
 ```
 
-Parsed, but currently return `<name> is not implemented yet`. Error variants for them already
-exist: `NotDocked`, `InsufficientCargo`, `ThroughputExceeded`.
+`load` moves one unit for `destination` from the dock onto the vessel. `unload` moves one unit
+the other way, or delivers it (removes it from the sim) if `destination` is the dock's own
+location. `swap` is a load and an unload in one command, and it either fully applies or not at all.
+
+- The vessel must be docked in committed state and have no pending undock.
+- The unit has to exist in planned state, so two loads can't take the same unit.
+- **Throughput** is counted from the diff between each docked vessel's committed and planned
+  cargo, not by counting commands. Per vessel, ops = `max(units loaded, units unloaded)`, so a
+  swap is one op and loading then unloading the same unit is zero. Delivered units count as
+  unloads. The sum over vessels at the dock must stay within `dock_throughput[location]`, or
+  the command fails with `transfer of <n> operations exceeds dock throughput of <cap> at location <loc>`.
 
 ## `get_state_at`
 
@@ -99,6 +122,6 @@ exist: `NotDocked`, `InsufficientCargo`, `ThroughputExceeded`.
 {"command":"get_state_at","parameters":{"tick":3}}
 ```
 
-Parsed (`tick` is signed so negatives get a clean error), but currently returns
-`get_state_at is not implemented yet`. It's meant to return the committed world at that tick.
-`NegativeTick` and `TickInFuture` are already defined for it.
+Returns the committed world as of that tick, from history. Pending planned changes never show
+up. `tick` is parsed as a wide signed integer, so a negative tick gets `tick <t> is negative` and
+any tick past the current one, however large, gets `tick <t> is in the future (current tick: <now>)`.

@@ -14,13 +14,14 @@ tests/
 
 ## `cli.rs`
 
-A `run(input: &[u8]) -> (Vec<Value>, bool)` helper pipes bytes into
-`CARGO_BIN_EXE_fleet-sim` and parses each stdout line.
+`run_raw(input: &[u8]) -> (String, bool)` pipes bytes into `CARGO_BIN_EXE_fleet-sim` and
+returns raw stdout. `run` wraps it and parses each line as JSON.
 
 | Test | Checks |
 |---|---|
 | `invalid_utf8_line_gets_an_error_and_the_loop_keeps_going` | bad bytes → error line, next command still runs |
 | `blank_and_crlf_lines_are_handled` | blank lines skipped, `\r\n` accepted |
+| `golden_outputs_match_byte_for_byte` | binary output for each spec example equals its `.out.jsonl` exactly |
 
 ## `golden.rs`
 

@@ -33,7 +33,7 @@ apply to a scratch copy of planned, count operations at the dock, then commit or
 
 When more than one thing is wrong, the error you get depends on check order. The current order:
 
-- **Envelope:** parse → initialized? → handler.
+- **Envelope:** parse → initialized? → cargo mode (for the five dock/cargo commands) → handler.
 - **`set_destination`:** unknown vessel → location range → idle → arrival overflow.
 - **`init`:** travel matrix → throughput (or manifest-without-throughput) → each vessel (range,
   then duplicate id) → manifest entries → manifest overflow.
