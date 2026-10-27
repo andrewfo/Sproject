@@ -32,10 +32,10 @@ pub enum SimError {
         location: Location,
     },
     TickInFuture {
-        tick: i64,
+        tick: i128,
         current: Tick,
     },
-    NegativeTick(i64),
+    NegativeTick(i128),
     NotImplemented(&'static str),
 }
 

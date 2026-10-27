@@ -41,8 +41,9 @@ pub enum Command {
         unload_destination: Location,
     },
     GetStateAt {
-        // Signed so a negative tick gets a clean error instead of a parse failure.
-        tick: i64,
+        // Signed so a negative tick gets a clean error instead of a parse failure, and wider than
+        // u64 so any tick past u64::MAX is still just "in the future".
+        tick: i128,
     },
 }
 

@@ -341,9 +341,17 @@ impl Sim {
         self.transfer(vessel_id, Some(load_destination), Some(unload_destination))
     }
 
-    // TODO: bounds-check against current tick, render history[tick].
-    fn get_state_at(&self, _tick: i64) -> Result<Value, SimError> {
-        Err(SimError::NotImplemented("get_state_at"))
+    /// Reads committed history only, so pending planned changes never show up here.
+    fn get_state_at(&self, tick: i128) -> Result<Value, SimError> {
+        if tick < 0 {
+            return Err(SimError::NegativeTick(tick));
+        }
+        let current = self.committed.tick;
+        let world = usize::try_from(tick)
+            .ok()
+            .and_then(|t| self.history.get(t))
+            .ok_or(SimError::TickInFuture { tick, current })?;
+        Ok(protocol::render_world(world, self.config.cargo_enabled()))
     }
 }
 
@@ -1734,6 +1742,71 @@ mod tests {
         assert_eq!(
             out["payload"]["vessels"]["v1"],
             serde_json::json!({"state": "idle", "location": 0, "cargo": [{"destination": 2, "quantity": 1}]})
+        );
+    }
+
+    fn get_state_at(tick: &str) -> String {
+        format!(r#"{{"command":"get_state_at","parameters":{{"tick":{tick}}}}}"#)
+    }
+
+    #[test]
+    fn get_state_at_zero_is_the_init_state() {
+        let mut e = Engine::new();
+        let init = e.handle_line(&std_init());
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(TICK);
+        assert_eq!(e.handle_line(&get_state_at("0")), init);
+    }
+
+    #[test]
+    fn get_state_at_the_current_tick_matches_get_state_after_a_tick() {
+        let mut e = initialized();
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(TICK);
+        e.handle_line(TICK);
+        assert_eq!(e.handle_line(&get_state_at("2")), e.handle_line(GET_STATE));
+    }
+
+    #[test]
+    fn get_state_at_rejects_future_and_negative_ticks() {
+        let mut e = initialized();
+        e.handle_line(TICK);
+        assert_error(
+            &e.handle_line(&get_state_at("2")),
+            "tick 2 is in the future (current tick: 1)",
+        );
+        assert_error(&e.handle_line(&get_state_at("-1")), "tick -1 is negative");
+        // past i64 and u64 range is still just the future, not a parse error
+        assert_error(
+            &e.handle_line(&get_state_at("99999999999999999999")),
+            "tick 99999999999999999999 is in the future (current tick: 1)",
+        );
+    }
+
+    #[test]
+    fn get_state_at_ignores_pending_changes_and_changes_nothing() {
+        let mut e = initialized();
+        e.handle_line(TICK);
+        let committed = e.handle_line(&get_state_at("1"));
+        let planned = e.handle_line(&set_dest("v1", 1));
+        assert_eq!(e.handle_line(&get_state_at("1")), committed);
+        assert_ne!(committed, planned);
+        assert_eq!(e.handle_line(GET_STATE), planned);
+    }
+
+    #[test]
+    fn get_state_at_shows_cargo_in_cargo_mode() {
+        let mut e = stocked_engine();
+        e.handle_line(&load("v1", 2));
+        e.handle_line(TICK);
+        let out: Value = serde_json::from_str(&e.handle_line(&get_state_at("1"))).unwrap();
+        assert_eq!(
+            out["payload"]["vessels"]["v1"]["cargo"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            v1_cargo(&e.handle_line(&get_state_at("2"))),
+            serde_json::json!([{"destination": 2, "quantity": 1}])
         );
     }
 
