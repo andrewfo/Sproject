@@ -221,12 +221,24 @@ impl Sim {
         Ok(())
     }
 
-    fn dock(&mut self, _vessel_id: &str) -> Result<(), SimError> {
-        Err(SimError::NotImplemented("dock"))
+    /// Overrides a pending move. On a vessel that's already docked it cancels a pending undock,
+    /// and docking twice is a no-op.
+    fn dock(&mut self, vessel_id: &str) -> Result<(), SimError> {
+        let location = match self.committed_vessel(vessel_id)?.status {
+            VesselStatus::Idle { location } | VesselStatus::Docked { location } => location,
+            VesselStatus::Transit { .. } => return Err(SimError::NotIdle(vessel_id.to_owned())),
+        };
+        self.planned.vessels[vessel_id].status = VesselStatus::Docked { location };
+        Ok(())
     }
 
-    fn undock(&mut self, _vessel_id: &str) -> Result<(), SimError> {
-        Err(SimError::NotImplemented("undock"))
+    /// Only a vessel docked at the last tick can undock. Pending cargo ops stay, and undocking twice is a no-op.
+    fn undock(&mut self, vessel_id: &str) -> Result<(), SimError> {
+        let VesselStatus::Docked { location } = self.committed_vessel(vessel_id)?.status else {
+            return Err(SimError::NotDocked(vessel_id.to_owned()));
+        };
+        self.planned.vessels[vessel_id].status = VesselStatus::Idle { location };
+        Ok(())
     }
 
     // TODO: load/unload/swap all go through one helper: apply to a scratch copy of planned,
@@ -960,6 +972,175 @@ mod tests {
         // an empty manifest is fine in base mode
         let v: Value = serde_json::from_str(&e.handle_line(&tick_with("[]"))).unwrap();
         assert_eq!(v["payload"]["tick"], 1);
+    }
+
+    fn dock(vessel: &str) -> String {
+        format!(r#"{{"command":"dock","parameters":{{"vessel_id":"{vessel}"}}}}"#)
+    }
+
+    fn undock(vessel: &str) -> String {
+        format!(r#"{{"command":"undock","parameters":{{"vessel_id":"{vessel}"}}}}"#)
+    }
+
+    /// v1 docked at location 0 as of the last tick.
+    fn docked_engine() -> Engine {
+        let mut e = cargo_initialized();
+        e.handle_line(&dock("v1"));
+        e.handle_line(TICK);
+        e
+    }
+
+    #[test]
+    fn dock_from_idle_plans_docked() {
+        let mut e = cargo_initialized();
+        let out: Value = serde_json::from_str(&e.handle_line(&dock("v1"))).unwrap();
+        assert_eq!(
+            out["payload"]["vessels"]["v1"],
+            serde_json::json!({ "state": "docked", "location": 0, "cargo": [] })
+        );
+        assert_eq!(
+            committed_status(&e, "v1"),
+            VesselStatus::Idle { location: 0 }
+        );
+        e.handle_line(TICK);
+        assert_eq!(
+            committed_status(&e, "v1"),
+            VesselStatus::Docked { location: 0 }
+        );
+    }
+
+    #[test]
+    fn dock_overrides_pending_set_destination() {
+        let mut e = cargo_initialized();
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(&dock("v1"));
+        assert_eq!(
+            planned_status(&e, "v1"),
+            VesselStatus::Docked { location: 0 }
+        );
+    }
+
+    #[test]
+    fn set_destination_overrides_pending_dock() {
+        let mut e = cargo_initialized();
+        e.handle_line(&dock("v1"));
+        e.handle_line(&set_dest("v1", 1));
+        assert_eq!(
+            planned_status(&e, "v1"),
+            VesselStatus::Transit {
+                from: 0,
+                to: 1,
+                arrives_at_tick: 4
+            }
+        );
+    }
+
+    #[test]
+    fn set_destination_to_current_location_cancels_pending_dock() {
+        let mut e = cargo_initialized();
+        e.handle_line(&dock("v1"));
+        e.handle_line(&set_dest("v1", 0));
+        assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
+    }
+
+    #[test]
+    fn dock_twice_is_a_no_op() {
+        let mut e = cargo_initialized();
+        let first = e.handle_line(&dock("v1"));
+        assert_eq!(e.handle_line(&dock("v1")), first);
+
+        let mut e = docked_engine();
+        let before = e.handle_line(GET_STATE);
+        assert_eq!(e.handle_line(&dock("v1")), before);
+    }
+
+    #[test]
+    fn dock_rejects_committed_transit() {
+        let mut e = cargo_initialized();
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(TICK);
+        assert_error(&e.handle_line(&dock("v1")), "vessel v1 is not idle");
+        assert!(matches!(
+            planned_status(&e, "v1"),
+            VesselStatus::Transit { .. }
+        ));
+    }
+
+    #[test]
+    fn dock_rejects_unknown_vessel() {
+        let mut e = cargo_initialized();
+        assert_error(&e.handle_line(&dock("nope")), "unknown vessel nope");
+    }
+
+    #[test]
+    fn undock_plans_idle() {
+        let mut e = docked_engine();
+        e.handle_line(&undock("v1"));
+        assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
+        assert_eq!(
+            committed_status(&e, "v1"),
+            VesselStatus::Docked { location: 0 }
+        );
+        e.handle_line(TICK);
+        assert_eq!(
+            committed_status(&e, "v1"),
+            VesselStatus::Idle { location: 0 }
+        );
+    }
+
+    #[test]
+    fn undock_twice_is_a_no_op() {
+        let mut e = docked_engine();
+        let first = e.handle_line(&undock("v1"));
+        assert_eq!(e.handle_line(&undock("v1")), first);
+    }
+
+    #[test]
+    fn dock_after_undock_cancels_the_undock() {
+        let mut e = docked_engine();
+        e.handle_line(&undock("v1"));
+        e.handle_line(&dock("v1"));
+        assert_eq!(
+            planned_status(&e, "v1"),
+            VesselStatus::Docked { location: 0 }
+        );
+    }
+
+    #[test]
+    fn undock_rejects_pending_dock() {
+        // committed is still idle, so there's nothing to undock from yet
+        let mut e = cargo_initialized();
+        e.handle_line(&dock("v1"));
+        assert_error(&e.handle_line(&undock("v1")), "vessel v1 is not docked");
+        assert_eq!(
+            planned_status(&e, "v1"),
+            VesselStatus::Docked { location: 0 }
+        );
+    }
+
+    #[test]
+    fn undock_rejects_idle_and_transit() {
+        let mut e = cargo_initialized();
+        assert_error(&e.handle_line(&undock("v1")), "vessel v1 is not docked");
+        e.handle_line(&set_dest("v1", 1));
+        e.handle_line(TICK);
+        assert_error(&e.handle_line(&undock("v1")), "vessel v1 is not docked");
+    }
+
+    #[test]
+    fn undock_rejects_unknown_vessel() {
+        let mut e = cargo_initialized();
+        assert_error(&e.handle_line(&undock("nope")), "unknown vessel nope");
+    }
+
+    #[test]
+    fn set_destination_rejects_committed_docked() {
+        let mut e = docked_engine();
+        assert_error(&e.handle_line(&set_dest("v1", 1)), "vessel v1 is not idle");
+        // even with an undock pending, it has to wait for the tick
+        e.handle_line(&undock("v1"));
+        assert_error(&e.handle_line(&set_dest("v1", 1)), "vessel v1 is not idle");
+        assert_eq!(planned_status(&e, "v1"), VesselStatus::Idle { location: 0 });
     }
 
     fn assert_invalid_command(response: &str, unknown_field: &str) {
