@@ -54,7 +54,6 @@ macro_rules! golden {
 }
 
 golden! {
-    #[ignore = "engine not implemented yet"]
     base_example,
     #[ignore = "engine not implemented yet"]
     cargo_example,
