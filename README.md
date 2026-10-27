@@ -3,6 +3,10 @@
 A discrete-time simulation engine for a fleet of vessels. It reads newline-delimited JSON commands
 on stdin and writes one JSON response per command to stdout.
 
+It covers the base sim (`init`, `tick`, `set_destination`, `get_state`), docks and cargo
+(`dock`, `undock`, `load`, `unload`, `swap`, cargo manifests, dock throughput), and history
+(`get_state_at`). See [docs/protocol/commands.md](docs/protocol/commands.md) for each command.
+
 ## Run
 
 ```sh
@@ -14,10 +18,11 @@ You can also run it interactively: `cargo run`, then type commands one per line.
 ## Test
 
 ```sh
-cargo test   # unit, CLI, and golden spec examples
+cargo test                                  # unit, golden, CLI, and property tests
+cargo clippy --all-targets -- -D warnings   # lint
 ```
 
-Golden cases are in `tests/golden/`. Each `NAME.in.jsonl` is a command stream, and the matching
+Golden cases are in `tests/golden/`: the three spec examples plus one edge-case file per theme. Each `NAME.in.jsonl` is a command stream, and the matching
 `NAME.out.jsonl` holds the expected response for each line. To add a case, drop in a new pair
 and register its name in the `golden!` list in `tests/golden.rs`.
 
