@@ -57,12 +57,21 @@ impl Config {
     }
 }
 
-/// Adds `qty` units for `dest` to an inventory.
-pub fn add_cargo(inv: &mut Inventory, dest: Location, qty: u32) {
-    *inv.entry(dest).or_insert(0) += qty;
+/// Adds `qty` units for `dest`. Returns false (and leaves `inv` untouched) if the total would overflow.
+#[must_use]
+pub fn add_cargo(inv: &mut Inventory, dest: Location, qty: u32) -> bool {
+    let have = inv.get(&dest).copied().unwrap_or(0);
+    match have.checked_add(qty) {
+        Some(total) => {
+            inv.insert(dest, total);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Removes `qty` units for `dest`. Returns false (and leaves `inv` untouched) if there aren't enough.
+#[must_use]
 pub fn remove_cargo(inv: &mut Inventory, dest: Location, qty: u32) -> bool {
     match inv.get_mut(&dest) {
         Some(have) if *have >= qty => {

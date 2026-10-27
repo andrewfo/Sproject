@@ -92,13 +92,7 @@ impl Sim {
 
         validate_manifest(&params.cargo_manifest, num_locations).map_err(SimError::InvalidInit)?;
         let mut docks = vec![Inventory::new(); num_locations];
-        for entry in &params.cargo_manifest {
-            add_cargo(
-                &mut docks[entry.location],
-                entry.destination,
-                entry.quantity,
-            );
-        }
+        apply_manifest(&mut docks, &params.cargo_manifest).map_err(SimError::InvalidInit)?;
 
         let world = World {
             tick: 0,
@@ -166,11 +160,15 @@ impl Sim {
     }
 
     /// A vessel whose arrival tick is the new tick shows up as idle at its destination right away.
-    // TODO: cargo mode — validate and add the tick's manifest.
+    /// The manifest lands after arrivals. A bad manifest rejects the tick and nothing advances.
     fn tick(&mut self, params: TickParams) -> Result<(), SimError> {
-        if !params.cargo_manifest.is_empty() {
-            return Err(SimError::NotImplemented("cargo"));
+        if !self.config.cargo_enabled() && !params.cargo_manifest.is_empty() {
+            return Err(SimError::InvalidManifest(
+                "cargo_manifest requires dock_throughput".into(),
+            ));
         }
+        validate_manifest(&params.cargo_manifest, self.config.num_locations())
+            .map_err(SimError::InvalidManifest)?;
 
         let mut next = self.planned.clone();
         next.tick += 1;
@@ -185,6 +183,8 @@ impl Sim {
                 vessel.status = VesselStatus::Idle { location: to };
             }
         }
+        apply_manifest(&mut next.docks, &params.cargo_manifest)
+            .map_err(SimError::InvalidManifest)?;
 
         self.committed = next.clone();
         self.planned = next.clone();
@@ -318,6 +318,24 @@ fn validate_manifest(entries: &[ManifestEntry], num_locations: usize) -> Result<
         }
         if entry.quantity == 0 {
             return Err(format!("cargo_manifest[{i}] quantity must be positive"));
+        }
+    }
+    Ok(())
+}
+
+/// Adds an already-validated manifest to the docks. Callers pass a scratch copy, so an overflow
+/// partway through doesn't leak into real state.
+fn apply_manifest(docks: &mut [Inventory], entries: &[ManifestEntry]) -> Result<(), String> {
+    for (i, entry) in entries.iter().enumerate() {
+        if !add_cargo(
+            &mut docks[entry.location],
+            entry.destination,
+            entry.quantity,
+        ) {
+            return Err(format!(
+                "cargo_manifest[{i}] overflows the quantity for destination {} at location {}",
+                entry.destination, entry.location
+            ));
         }
     }
     Ok(())
@@ -826,6 +844,122 @@ mod tests {
         assert_eq!(sim.committed, sim.planned);
         assert_eq!(sim.history, vec![sim.committed.clone()]);
         assert_eq!(sim.committed.docks[2], Inventory::from([(0, 1)]));
+    }
+
+    fn tick_with(manifest: &str) -> String {
+        format!(r#"{{"command":"tick","parameters":{{"cargo_manifest":{manifest}}}}}"#)
+    }
+
+    fn cargo_initialized() -> Engine {
+        let mut e = Engine::new();
+        e.handle_line(&cargo_init_line("[2,4,1]", "[]"));
+        e
+    }
+
+    #[test]
+    fn tick_manifest_shows_up_in_committed_state() {
+        let mut e = cargo_initialized();
+        let out: Value = serde_json::from_str(&e.handle_line(&tick_with(
+            r#"[{"location":0,"destination":2,"quantity":1},{"location":0,"destination":1,"quantity":1}]"#,
+        )))
+        .unwrap();
+        assert_eq!(
+            out["payload"]["cargo"],
+            serde_json::json!([
+                { "location": 0, "destination": 2, "quantity": 1 },
+                { "location": 0, "destination": 1, "quantity": 1 },
+            ])
+        );
+        let sim = e.sim.as_ref().unwrap();
+        assert_eq!(sim.committed, sim.planned);
+        assert_eq!(sim.history[1], sim.committed);
+        // tick 0 in history doesn't pick up the new cargo
+        assert!(sim.history[0].docks[0].is_empty());
+    }
+
+    #[test]
+    fn tick_manifest_merges_repeated_destinations_in_order() {
+        let mut e = cargo_initialized();
+        e.handle_line(&tick_with(
+            r#"[{"location":1,"destination":2,"quantity":1},{"location":1,"destination":0,"quantity":2}]"#,
+        ));
+        e.handle_line(&tick_with(
+            r#"[{"location":1,"destination":0,"quantity":3},{"location":1,"destination":2,"quantity":4}]"#,
+        ));
+        assert_eq!(
+            e.sim.as_ref().unwrap().committed.docks[1],
+            Inventory::from([(2, 5), (0, 5)])
+        );
+    }
+
+    #[test]
+    fn bad_tick_manifest_leaves_tick_and_state_alone() {
+        let cases = [
+            (
+                r#"[{"location":0,"destination":1,"quantity":1},{"location":9,"destination":1,"quantity":1}]"#,
+                "invalid manifest: cargo_manifest[1] location 9 is out of range (0 to 2)",
+            ),
+            (
+                r#"[{"location":0,"destination":1,"quantity":0}]"#,
+                "invalid manifest: cargo_manifest[0] quantity must be positive",
+            ),
+        ];
+        for (manifest, message) in cases {
+            let mut e = cargo_initialized();
+            e.handle_line(&set_dest("v1", 1));
+            let before_planned = e.sim.as_ref().unwrap().planned.clone();
+            assert_error(&e.handle_line(&tick_with(manifest)), message);
+            let sim = e.sim.as_ref().unwrap();
+            assert_eq!(sim.committed.tick, 0);
+            assert_eq!(sim.planned, before_planned);
+            assert_eq!(sim.history.len(), 1);
+        }
+    }
+
+    #[test]
+    fn tick_manifest_overflow_is_rejected() {
+        let mut e = cargo_initialized();
+        e.handle_line(&tick_with(
+            r#"[{"location":0,"destination":1,"quantity":4294967295}]"#,
+        ));
+        assert_error(
+            &e.handle_line(&tick_with(
+                r#"[{"location":2,"destination":0,"quantity":1},{"location":0,"destination":1,"quantity":1}]"#,
+            )),
+            "invalid manifest: cargo_manifest[1] overflows the quantity for destination 1 at location 0",
+        );
+        let sim = e.sim.as_ref().unwrap();
+        assert_eq!(sim.committed.tick, 1);
+        // the first entry didn't sneak in either
+        assert!(sim.planned.docks[2].is_empty());
+    }
+
+    #[test]
+    fn init_manifest_overflow_is_rejected() {
+        let mut e = Engine::new();
+        assert_error(
+            &e.handle_line(&cargo_init_line(
+                "[2,4,1]",
+                r#"[{"location":0,"destination":1,"quantity":4294967295},{"location":0,"destination":1,"quantity":1}]"#,
+            )),
+            "invalid init: cargo_manifest[1] overflows the quantity for destination 1 at location 0",
+        );
+        assert!(e.sim.is_none());
+    }
+
+    #[test]
+    fn base_mode_tick_rejects_manifest() {
+        let mut e = initialized();
+        assert_error(
+            &e.handle_line(&tick_with(
+                r#"[{"location":0,"destination":1,"quantity":1}]"#,
+            )),
+            "invalid manifest: cargo_manifest requires dock_throughput",
+        );
+        assert_eq!(e.sim.as_ref().unwrap().committed.tick, 0);
+        // an empty manifest is fine in base mode
+        let v: Value = serde_json::from_str(&e.handle_line(&tick_with("[]"))).unwrap();
+        assert_eq!(v["payload"]["tick"], 1);
     }
 
     fn assert_invalid_command(response: &str, unknown_field: &str) {
