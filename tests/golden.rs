@@ -1,9 +1,12 @@
 //! Golden tests: each `tests/golden/NAME.in.jsonl` is fed line by line to a fresh engine and every
 //! response is compared against the matching line of `NAME.out.jsonl`.
 //! Comparison uses parsed JSON, so object key order doesn't matter but array order does.
+//!
+//! Each fixture gets its own test so cases can be enabled one at a time. A fixture that isn't
+//! registered in `golden!` below fails `all_fixtures_registered`.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fleet_sim::Engine;
 use serde_json::Value;
@@ -44,18 +47,45 @@ fn run_case(input: &Path) {
     }
 }
 
+fn golden_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
+}
+
+macro_rules! golden {
+    ($($(#[$attr:meta])* $name:ident),* $(,)?) => {
+        const REGISTERED: &[&str] = &[$(stringify!($name)),*];
+        $(
+            #[test]
+            $(#[$attr])*
+            fn $name() {
+                run_case(&golden_dir().join(concat!(stringify!($name), ".in.jsonl")));
+            }
+        )*
+    };
+}
+
+golden! {
+    #[ignore = "engine not implemented yet"]
+    base_example,
+    #[ignore = "engine not implemented yet"]
+    cargo_example,
+    #[ignore = "engine not implemented yet"]
+    history_example,
+}
+
 #[test]
-#[ignore = "engine not implemented yet"]
-fn golden_files() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
-    let mut cases: Vec<_> = fs::read_dir(&dir)
+fn all_fixtures_registered() {
+    let mut unregistered: Vec<String> = fs::read_dir(golden_dir())
         .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.to_string_lossy().ends_with(".in.jsonl"))
+        .filter_map(|e| {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            name.strip_suffix(".in.jsonl").map(str::to_owned)
+        })
+        .filter(|name| !REGISTERED.contains(&name.as_str()))
         .collect();
-    cases.sort();
-    assert!(!cases.is_empty(), "no golden cases in {}", dir.display());
-    for case in cases {
-        run_case(&case);
-    }
+    unregistered.sort();
+    assert!(
+        unregistered.is_empty(),
+        "fixtures missing from golden!: {unregistered:?}"
+    );
 }

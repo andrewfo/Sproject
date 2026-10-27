@@ -19,7 +19,8 @@ cargo test -- --include-ignored  # also runs the golden spec examples
 ```
 
 Golden cases are in `tests/golden/`. Each `NAME.in.jsonl` is a command stream, and the matching
-`NAME.out.jsonl` holds the expected response for each line. To add a case, drop in a new pair.
+`NAME.out.jsonl` holds the expected response for each line. To add a case, drop in a new pair
+and register its name in the `golden!` list in `tests/golden.rs`.
 
 ## Layout
 
