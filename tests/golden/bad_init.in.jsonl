@@ -1,0 +1,13 @@
+{"command":"init","parameters":{"travel_times":[],"vessels":[]}}
+{"command":"init","parameters":{"travel_times":[[0,4],[4,0,3]],"vessels":[]}}
+{"command":"init","parameters":{"travel_times":[[1,4],[4,0]],"vessels":[]}}
+{"command":"init","parameters":{"travel_times":[[0,0],[4,0]],"vessels":[]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"vessels":[{"id":"v1","location":0},{"id":"v1","location":1}]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"vessels":[{"id":"v1","location":3}]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"dock_throughput":[2,4],"vessels":[]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"dock_throughput":[2,0,1],"vessels":[]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"vessels":[],"cargo_manifest":[{"location":0,"destination":1,"quantity":1}]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"dock_throughput":[2,4,1],"vessels":[],"cargo_manifest":[{"location":0,"destination":1,"quantity":0}]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"vessels":[],"cargo_manfest":[]}}
+{"command":"get_state","parameters":{}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"vessels":[{"id":"v1","location":0}]}}

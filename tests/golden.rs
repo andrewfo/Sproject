@@ -57,6 +57,13 @@ golden! {
     base_example,
     cargo_example,
     history_example,
+    errors_before_init,
+    bad_init,
+    throughput,
+    dock_state_machine,
+    delivery,
+    arrive_and_recommand,
+    history_bounds,
 }
 
 #[test]

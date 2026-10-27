@@ -1,0 +1,9 @@
+{"command":"get_state","parameters":{}}
+{"command":"tick","parameters":{}}
+{"command":"set_destination","parameters":{"vessel_id":"v1","destination":1}}
+{"command":"get_state_at","parameters":{"tick":0}}
+{"command":"fly","parameters":{}}
+not json at all
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"vessels":[{"id":"v1","location":0}]}}
+{"command":"init","parameters":{"travel_times":[[0,4,7],[4,0,3],[7,3,0]],"vessels":[{"id":"v1","location":0}]}}
+{"command":"get_state","parameters":{}}

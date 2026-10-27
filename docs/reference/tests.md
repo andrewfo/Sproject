@@ -9,7 +9,8 @@ tests/
 └── golden/
     ├── base_example.in.jsonl    / .out.jsonl   (9 lines)  base sim
     ├── cargo_example.in.jsonl   / .out.jsonl   (21 lines) docks + cargo
-    └── history_example.in.jsonl / .out.jsonl   (25 lines) cargo + get_state_at
+    ├── history_example.in.jsonl / .out.jsonl   (25 lines) cargo + get_state_at
+    └── ...                                     edge cases, see below
 ```
 
 ## `cli.rs`
@@ -21,7 +22,7 @@ returns raw stdout. `run` wraps it and parses each line as JSON.
 |---|---|
 | `invalid_utf8_line_gets_an_error_and_the_loop_keeps_going` | bad bytes → error line, next command still runs |
 | `blank_and_crlf_lines_are_handled` | blank lines skipped, `\r\n` accepted |
-| `golden_outputs_match_byte_for_byte` | binary output for each spec example equals its `.out.jsonl` exactly |
+| `golden_outputs_match_byte_for_byte` | binary output for every fixture equals its `.out.jsonl` exactly |
 
 ## `golden.rs`
 
@@ -33,5 +34,17 @@ returns raw stdout. `run` wraps it and parses each line as JSON.
 
 ## Fixtures
 
-The three fixtures are the worked examples from the spec. `.in` holds one command per line, and
-`.out` holds the expected response on the same line number.
+`base_example`, `cargo_example` and `history_example` are the worked examples from the spec. The
+rest are edge cases, one theme per file:
+
+| Case | Covers |
+|---|---|
+| `errors_before_init` | commands before `init`, bad JSON, unknown command, double `init` |
+| `bad_init` | each `init` validation error, then a retry that works |
+| `throughput` | two vessels sharing a dock's throughput, swaps, load-then-unload netting to zero |
+| `dock_state_machine` | dock/undock/set_destination overriding and cancelling each other |
+| `delivery` | carrying cargo to its destination and unloading it out of the sim |
+| `arrive_and_recommand` | arriving on a tick and getting a new destination that same tick |
+| `history_bounds` | `get_state_at` bounds, and pending changes not leaking into history |
+
+`.in` holds one command per line, and `.out` holds the expected response on the same line number.

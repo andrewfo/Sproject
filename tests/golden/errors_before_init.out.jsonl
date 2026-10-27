@@ -1,0 +1,9 @@
+{"status":"error","payload":{"message":"simulation not initialized; send init first"}}
+{"status":"error","payload":{"message":"simulation not initialized; send init first"}}
+{"status":"error","payload":{"message":"simulation not initialized; send init first"}}
+{"status":"error","payload":{"message":"simulation not initialized; send init first"}}
+{"status":"error","payload":{"message":"invalid command: unknown variant `fly`, expected one of `init`, `tick`, `set_destination`, `get_state`, `dock`, `undock`, `load`, `unload`, `swap`, `get_state_at` at line 1 column 16"}}
+{"status":"error","payload":{"message":"invalid command: expected ident at line 1 column 2"}}
+{"status":"ok","payload":{"tick":0,"vessels":{"v1":{"state":"idle","location":0}}}}
+{"status":"error","payload":{"message":"simulation already initialized"}}
+{"status":"ok","payload":{"tick":0,"vessels":{"v1":{"state":"idle","location":0}}}}

@@ -32,6 +32,13 @@ does. A failure prints the line number, the command, and both values.
 | `base_example` | the spec's base example |
 | `cargo_example` | the spec's cargo example |
 | `history_example` | the cargo example plus its `get_state_at` queries |
+| `errors_before_init` | commands before `init`, bad JSON, unknown command, double `init` |
+| `bad_init` | each `init` validation error, then a retry that works |
+| `throughput` | two vessels sharing a dock's throughput, swaps, load-then-unload netting to zero |
+| `dock_state_machine` | dock/undock/set_destination overriding and cancelling each other |
+| `delivery` | carrying cargo to its destination and unloading it out of the sim |
+| `arrive_and_recommand` | arriving on a tick and getting a new destination that same tick |
+| `history_bounds` | `get_state_at` bounds, and pending changes not leaking into history |
 
 `all_fixtures_registered` fails if a `.in.jsonl` file exists without an entry in the `golden!`
 list. See [contributing/adding-a-golden-test.md](../contributing/adding-a-golden-test.md).

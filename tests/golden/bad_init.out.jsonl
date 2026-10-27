@@ -1,0 +1,13 @@
+{"status":"error","payload":{"message":"invalid init: travel_times must have at least one location"}}
+{"status":"error","payload":{"message":"invalid init: travel_times must be square: row 1 has 3 entries, expected 2"}}
+{"status":"error","payload":{"message":"invalid init: travel_times[0][0] must be 0"}}
+{"status":"error","payload":{"message":"invalid init: travel_times[0][1] must be positive"}}
+{"status":"error","payload":{"message":"invalid init: duplicate vessel id v1"}}
+{"status":"error","payload":{"message":"invalid init: vessel v1 location 3 is out of range (0 to 2)"}}
+{"status":"error","payload":{"message":"invalid init: dock_throughput has 2 entries, expected 3"}}
+{"status":"error","payload":{"message":"invalid init: dock_throughput[1] must be positive"}}
+{"status":"error","payload":{"message":"invalid init: cargo_manifest requires dock_throughput"}}
+{"status":"error","payload":{"message":"invalid init: cargo_manifest[0] quantity must be positive"}}
+{"status":"error","payload":{"message":"invalid command: unknown field `cargo_manfest`, expected one of `travel_times`, `vessels`, `dock_throughput`, `cargo_manifest` at line 1 column 101"}}
+{"status":"error","payload":{"message":"simulation not initialized; send init first"}}
+{"status":"ok","payload":{"tick":0,"vessels":{"v1":{"state":"idle","location":0}}}}

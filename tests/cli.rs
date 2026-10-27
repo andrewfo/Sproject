@@ -57,11 +57,20 @@ fn blank_and_crlf_lines_are_handled() {
 }
 
 /// The golden tests compare parsed JSON, so they'd miss a change in key order or spacing. This
-/// checks the binary's raw stdout against the fixtures byte for byte.
+/// checks the binary's raw stdout against every fixture byte for byte.
 #[test]
 fn golden_outputs_match_byte_for_byte() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
-    for name in ["base_example", "cargo_example", "history_example"] {
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            name.strip_suffix(".in.jsonl").map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    assert!(!names.is_empty());
+    for name in names {
         let input = std::fs::read(dir.join(format!("{name}.in.jsonl"))).unwrap();
         let want = std::fs::read_to_string(dir.join(format!("{name}.out.jsonl"))).unwrap();
 
