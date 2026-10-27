@@ -7,13 +7,14 @@ cargo test                  # unit, CLI, and golden tests
 cargo clippy --all-targets  # lint
 ```
 
-## Three layers
+## Four layers
 
 | Layer | Where | What it covers |
 |---|---|---|
 | Unit | `src/engine.rs` (`mod tests`) | Engine rules, driven through `Engine::handle_line` with JSON strings |
 | Golden | `tests/golden.rs` + `tests/golden/*.jsonl` | Full command streams from the spec, checked line by line |
 | CLI | `tests/cli.rs` | The real binary: UTF-8 errors, blank lines, CRLF, byte-exact golden output |
+| Property | `tests/props.rs` | Random command streams, checking invariants that should always hold |
 
 ### Unit tests
 
@@ -48,3 +49,17 @@ list. See [contributing/adding-a-golden-test.md](../contributing/adding-a-golden
 These spawn the compiled binary (`CARGO_BIN_EXE_fleet-sim`) because stdin decoding lives in
 `main.rs`, which the engine tests can't reach. One of them also diffs raw stdout against each
 golden `.out.jsonl` byte for byte, since the golden tests themselves ignore key order.
+
+### Property tests
+
+`tests/props.rs` uses `proptest` to throw 512 random command streams (up to 80 commands each)
+at a cargo-mode sim. Vessel ids and locations sometimes go out of range, and some lines are
+broken JSON, so the error paths get exercised too. After every command it checks:
+
+- the response is exactly one line of JSON (so no panics either),
+- cargo is conserved: what's in the docks and on vessels equals everything manifested minus
+  everything delivered,
+- right after a tick, `get_state_at(current)` equals the tick's response (planned == committed),
+- every `get_state_at(t)` returns exactly what tick `t` looked like when it was committed.
+
+When it fails, proptest shrinks the input to a minimal command list and prints it.

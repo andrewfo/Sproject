@@ -6,6 +6,7 @@
 tests/
 ├── cli.rs                       spawns the binary
 ├── golden.rs                    runs fixture pairs through Engine
+├── props.rs                     proptest: random command streams vs invariants
 └── golden/
     ├── base_example.in.jsonl    / .out.jsonl   (9 lines)  base sim
     ├── cargo_example.in.jsonl   / .out.jsonl   (21 lines) docks + cargo
@@ -23,6 +24,13 @@ returns raw stdout. `run` wraps it and parses each line as JSON.
 | `invalid_utf8_line_gets_an_error_and_the_loop_keeps_going` | bad bytes → error line, next command still runs |
 | `blank_and_crlf_lines_are_handled` | blank lines skipped, `\r\n` accepted |
 | `golden_outputs_match_byte_for_byte` | binary output for every fixture equals its `.out.jsonl` exactly |
+
+## `props.rs`
+
+A `Cmd` enum and a `cmd()` strategy generate random commands, some with out-of-range ids and
+locations, plus some broken JSON. `random_command_streams_keep_the_invariants` replays a stream
+and checks one-JSON-line-per-command, cargo conservation, planned == committed after a tick, and
+that history never changes. See [testing](../getting-started/testing.md#property-tests).
 
 ## `golden.rs`
 
